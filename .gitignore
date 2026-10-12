@@ -1,0 +1,10 @@
+# Python
+__pycache__/
+*.pyc
+
+# Research data: per-target CSV logs
+logs/
+
+# Project documentation and superpowers workspaces (kept local by request)
+docs/superpowers/
+.superpowers/
