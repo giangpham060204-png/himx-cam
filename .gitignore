@@ -1,6 +1,7 @@
 # Python
 __pycache__/
 *.pyc
+.env
 
 # Research data: per-target CSV logs
 logs/

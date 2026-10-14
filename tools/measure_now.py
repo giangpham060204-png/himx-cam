@@ -5,7 +5,7 @@ slicer_bridge/live_frame.py; this remains for inspecting the raw matrices.
 
 Usage, from Slicer's Python Console:
 
-    exec(open('/home/gianghp/projects/himx-cam/tools/measure_now.py').read())
+    exec(open('<path-to-himx-cam>/tools/measure_now.py').read())
 
 Why `exec(open(...).read())` instead of `import`
 ------------------------------------------------
@@ -19,9 +19,49 @@ Keep this file tiny and free of logic. All measurement lives in
 print_slicer_constants.py; this only guarantees fresh code is used.
 """
 
+import pathlib
 import sys
 
-TOOLS_DIR = "/home/gianghp/projects/himx-cam/tools"
+# No hardcoded fallback: panic instead of guessing (see make_field_cube).
+
+
+def _resolve_project_root(_globals=None, _env=None):
+    """Project root for TOOLS_DIR without scanning the disk.
+
+    Same precedence as make_field_cube: PROJECT_ROOT_OVERRIDE global >
+    HIMX_CAM_ROOT env > truthful __file__ marker walk, else panic.
+    Returns the checkout root; TOOLS_DIR is derived from it.
+    """
+    import os
+    import pathlib
+
+    g = _globals if _globals is not None else globals()
+    e = _env if _env is not None else os.environ
+    override = g.get("PROJECT_ROOT_OVERRIDE")
+    if override:
+        return pathlib.Path(override)
+    env = e.get("HIMX_CAM_ROOT")
+    if env:
+        return pathlib.Path(env)
+    try:
+        here = pathlib.Path(__file__).resolve()
+    except NameError:
+        here = None
+    if here is not None and here.is_file():
+        for parent in [here.parent, *here.parents]:
+            if (parent / "frame.json").is_file() and (
+                parent / "targeting" / "converter.py"
+            ).is_file():
+                return parent
+    raise RuntimeError(
+        "could not locate himx-cam checkout (no fallback): set HIMX_CAM_ROOT "
+        "to the directory containing frame.json, or set PROJECT_ROOT_OVERRIDE "
+        f"in the Slicer console before exec(). __file__={here!r}"
+    )
+
+
+_PROJECT_ROOT = _resolve_project_root()
+TOOLS_DIR = str(_PROJECT_ROOT / "tools")
 TARGET = "print_slicer_constants"
 
 

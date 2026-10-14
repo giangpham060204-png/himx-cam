@@ -2,7 +2,7 @@
 
 Runs in a separate Slicer window:
 
-    timeout 300 /home/gianghp/Downloads/Slicer-5.12.3-linux-amd64/Slicer \
+    timeout 300 <slicer> \
         --no-splash --python-script tools/smoke_targeting_module.py
 
 Loads the module directly (no installation needed), injects synthetic Qt
@@ -14,7 +14,39 @@ import pathlib
 import sys
 import traceback
 
-PROJECT_ROOT = pathlib.Path("/home/gianghp/projects/himx-cam")
+# No hardcoded fallback: panic instead of guessing (see make_field_cube).
+
+
+def _resolve_project_root(_globals=None, _env=None):
+    """Checkout root without scanning the disk (same rule as make_field_cube)."""
+    import os
+
+    g = _globals if _globals is not None else globals()
+    e = _env if _env is not None else os.environ
+    override = g.get("PROJECT_ROOT_OVERRIDE")
+    if override:
+        return pathlib.Path(override)
+    env = e.get("HIMX_CAM_ROOT")
+    if env:
+        return pathlib.Path(env)
+    try:
+        here = pathlib.Path(__file__).resolve()
+    except NameError:
+        here = None
+    if here is not None and here.is_file():
+        for parent in [here.parent, *here.parents]:
+            if (parent / "frame.json").is_file() and (
+                parent / "targeting" / "converter.py"
+            ).is_file():
+                return parent
+    raise RuntimeError(
+        "could not locate himx-cam checkout (no fallback): set HIMX_CAM_ROOT "
+        "to the directory containing frame.json, or set PROJECT_ROOT_OVERRIDE "
+        f"in the Slicer console before exec(). __file__={here!r}"
+    )
+
+
+PROJECT_ROOT = _resolve_project_root()
 sys.path.insert(0, str(PROJECT_ROOT / "SlicerTargeting" / "Targeting"))
 sys.path.insert(0, str(PROJECT_ROOT))
 

@@ -126,17 +126,30 @@ def test_the_script_reloads_project_modules_on_every_run():
 
 
 def test_the_script_never_derives_paths_from_dunder_file():
-    """Console scripts must not derive paths from __file__.
+    """Console scripts must not naively derive paths from __file__.
 
     exec(open(...).read()) in Slicer's console leaves a wrong or missing
-    __file__, so building the project path from it silently points elsewhere
-    ("No module named 'targeting'"). The script must hardcode the root.
+    __file__, so building the project path from it alone silently points
+    elsewhere ("No module named 'targeting'"). Guarded use inside
+    _resolve_project_root is allowed: real file + marker, else fallback
+    to override / env / hardcoded root.
     """
     root = pathlib.Path(__file__).resolve().parents[1]
     source = (root / "tools" / "check_live_mapping.py").read_text()
-    for line in source.splitlines():
+    assert "_resolve_project_root" in source
+    assert "PROJECT_ROOT_OVERRIDE" in source
+    assert "HIMX_CAM_ROOT" in source
+    lines = source.splitlines()
+    in_resolver = False
+    for line in lines:
         stripped = line.strip()
         if stripped.startswith("#"):
             continue
-        assert "__file__" not in stripped, f"uses __file__: {stripped!r}"
-    assert "PROJECT_ROOT = pathlib.Path(" in source
+        if stripped.startswith("def _resolve_project_root"):
+            in_resolver = True
+            continue
+        if in_resolver and stripped.startswith("PROJECT_ROOT = "):
+            break
+        if not in_resolver:
+            assert "__file__" not in stripped, f"uses __file__: {stripped!r}"
+    assert "PROJECT_ROOT = _resolve_project_root()" in source
