@@ -24,7 +24,7 @@ Two pitfalls this tool works around:
 
 Run from Slicer's Python Console:
 
-    import sys; sys.path.insert(0, '/home/gianghp/projects/himx-cam/tools')
+    import sys; sys.path.insert(0, '<path-to-himx-cam>/tools')
     import print_slicer_constants as p
     import json; print(json.dumps(p.measure(), indent=2))
 """

@@ -46,11 +46,27 @@ def test_cube_bounds_follow_a_moved_field(tmp_path):
 
 
 def test_the_script_never_derives_paths_from_dunder_file():
-    """Same console rule as check_live_mapping.py: exec() has no real __file__."""
+    """Same console rule as check_live_mapping.py: exec() has no real __file__.
+
+    Guarded use inside _resolve_project_root is allowed: it only counts when
+    the path is a real file under a checkout marker, otherwise it falls back
+    to the explicit override / env / hardcoded root.
+    """
     source = pathlib.Path(cube.__file__).read_text()
-    for line in source.splitlines():
+    assert "_resolve_project_root" in source
+    assert "PROJECT_ROOT_OVERRIDE" in source
+    assert "HIMX_CAM_ROOT" in source
+    lines = source.splitlines()
+    in_resolver = False
+    for line in lines:
         stripped = line.strip()
         if stripped.startswith("#"):
             continue
-        assert "__file__" not in stripped, f"uses __file__: {stripped!r}"
-    assert "PROJECT_ROOT = pathlib.Path(" in source
+        if stripped.startswith("def _resolve_project_root"):
+            in_resolver = True
+            continue
+        if in_resolver and stripped.startswith("PROJECT_ROOT = "):
+            break
+        if not in_resolver:
+            assert "__file__" not in stripped, f"uses __file__: {stripped!r}"
+    assert "PROJECT_ROOT = _resolve_project_root()" in source

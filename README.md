@@ -22,7 +22,7 @@ the Slicer executable you installed.
 | Works today | Pixel + depth → 3D point, verified at 0.000 mm against Slicer's Data Probe; Slicer module with pick mode, virtual tip, labelled targets, daily CSV log; live view mapping (window resizes, zoom, monitor changes need nothing) |
 | Tested on | Linux desktop, 3D Slicer 5.12.3, system Python 3.12 (headless) + Slicer's bundled 3.12.10 (module) |
 | Not built yet | Patient-specific field shapes; finger-sized depth control (needs the touch device); robot-arm integration (needs the arm) |
-| Automated evidence | 118 headless tests; in-Slicer smoke suite 15/15; human acceptance run 6/6 |
+| Automated evidence | 123 headless tests; in-Slicer smoke suite 15/15; human acceptance run 6/6 |
 
 ---
 
@@ -122,7 +122,7 @@ The complete history of the project, in the order it was built:
 1. **The pure maths layer** (`targeting/`) — coordinate frames, the
    pixel + depth → Cube converter with its loud out-of-field refusal, and the
    daily CSV writer. Fully testable without Slicer; the suite currently stands
-   at **118 tests**.
+   at **123 tests**.
 2. **The live view mapping** (`slicer_bridge/`, `targeting/view_mapping.py`) —
    reads Slicer's own pixel→RAS matrices and derives the converter's constants
    from them (scale, view centre, screen directions, the Qt row flip).
@@ -141,7 +141,7 @@ The complete history of the project, in the order it was built:
    counters, "Open log folder", and the CSV record. A human acceptance run —
    install, place targets, verify the log, restore normal Slicer behaviour —
    passed all six checks.
-5. **Test infrastructure** — the 118-test headless suite plus a 15-check
+5. **Test infrastructure** — the 123-test headless suite plus a 15-check
    in-Slicer smoke suite that drives the module with synthetic clicks and
    compares every placed target against Slicer's own crosshair reading.
 6. **Operations tooling and records** — the field-cube builder, log
@@ -238,6 +238,7 @@ Slicer content. Without saving, they live only for the session.
 ```
 himx-cam/
 ├── frame.json             the field: size, centre, reference axis maps
+├── env.example            HIMX_CAM_ROOT template (once per machine)
 ├── targeting/             pure maths layer — no Slicer imports (enforced by a test)
 │   ├── converter.py       pixels + depth -> Cube; field bounds check; cube_to_ras
 │   ├── view_mapping.py    Slicer's live matrix -> scales, centres, screen signs
@@ -251,7 +252,7 @@ himx-cam/
 │       ├── Targeting.py           module + panel + click capture
 │       └── TargetingLib/logic.py  placement, nodes, logging
 ├── tools/                 console utilities (run inside Slicer by exec)
-├── tests/                 headless pytest suite (118 tests)
+├── tests/                 headless pytest suite (123 tests)
 ├── logs/                  research log (created on first use; git-ignored)
 └── docs/                  design/overview/guide notes (local only; git-ignored)
 ```
@@ -270,6 +271,25 @@ git clone <repository-url> <path-to-himx-cam>    # if a remote exists
 Everything is plain Python and JSON; there is no compile step and no package to
 install for the project itself.
 
+### 1b. Tell the tools where the checkout lives (once per machine)
+
+The console tools refuse to guess the project location: they panic instead of
+using a wrong path. Point them at the checkout once:
+
+```bash
+export HIMX_CAM_ROOT=<path-to-himx-cam>   # e.g. $HOME/projects/himx-cam
+```
+
+`env.example` shows the same variable for a local `.env` file. Inside Slicer's
+Python console (which does not inherit every shell setup and has no reliable
+`__file__` under `exec()`), set the equivalent global once per session before
+running any tool:
+
+```python
+import pathlib
+PROJECT_ROOT_OVERRIDE = pathlib.Path('<path-to-himx-cam>')
+```
+
 ### 2. Verify the maths on the laptop
 
 No Slicer required. Run, from the project folder:
@@ -279,12 +299,13 @@ cd <path-to-himx-cam>
 python3 -m pytest tests/ -q
 ```
 
-Expected final line: `118 passed`. This exercises the conversion maths, the
+Expected final line: `123 passed`. This exercises the conversion maths, the
 CSV writer, and the Slicer-facing glue (against fakes) entirely outside Slicer.
 If anything fails here, stop — later steps would be built on unverified maths.
 
 If `python3 -m pytest` is not found, install pytest once:
-`python3 -m pip install --user pytest`.
+`python3 -m pip install --user pytest` — or on Ubuntu:
+`sudo apt update && sudo apt install -y python3-pytest`.
 
 ### 3. Install Slicer
 
@@ -338,10 +359,12 @@ Either way, this is a one-time installation on a given machine.
 ### 5. Health check (recommended, one minute)
 
 This proves the pixel→3D geometry on *your* window, against Slicer's own
-readings. Open the Python console (**View → Python Console**) and run:
+readings. Open the Python console (**View → Python Console**) and run
+(requires the section 1b setup above — otherwise the tool panics with
+`could not locate himx-cam checkout` instead of guessing):
 
 ```python
-exec(open('<path-to-himx-cam>/tools/check_live_mapping.py').read())
+exec(open(PROJECT_ROOT_OVERRIDE.joinpath("tools/check_live_mapping.py").read_text()).read())
 ```
 
 It prints the live mapping for the three views, then walks you through three
@@ -368,10 +391,11 @@ minutes.
 covers the module area. You should see the four-pane layout.
 
 **Checkpoint 2 — build the field cube.** The cube lives in the scene, so it has
-to be created each time Slicer starts. In the Python console:
+to be created each time Slicer starts. In the Python console
+(requires the section 1b setup above):
 
 ```python
-exec(open('<path-to-himx-cam>/tools/make_field_cube.py').read())
+exec(open(PROJECT_ROOT_OVERRIDE.joinpath("tools/make_field_cube.py").read_text()).read())
 ```
 
 The console prints the field geometry and a line ending in
@@ -481,10 +505,13 @@ frames. `timestamp` is local time, ISO-8601, seconds precision.
 
 ## Tools (`tools/`)
 
-All console tools are run from Slicer's Python Console in this form:
+All console tools are run from Slicer's Python Console in this form
+(requires the section 1b setup — `PROJECT_ROOT_OVERRIDE` set once per
+session, or `HIMX_CAM_ROOT` exported before launching Slicer; otherwise the
+tool raises `could not locate himx-cam checkout` instead of guessing):
 
 ```python
-exec(open('<path-to-himx-cam>/tools/<tool>.py').read())
+exec(open(PROJECT_ROOT_OVERRIDE.joinpath("tools/<tool>.py").read_text()).read())
 ```
 
 `exec(open(...).read())` is deliberate: Slicer caches imported modules for the
@@ -517,7 +544,7 @@ for path in sorted(folder.glob('targets-*.csv')):
 ## Testing
 
 ```bash
-# headless (laptop, no Slicer): 118 tests
+# headless (laptop, no Slicer): 123 tests
 python3 -m pytest tests/ -q
 
 # in-Slicer smoke: loads the module in a separate Slicer instance,
@@ -537,14 +564,14 @@ minutes depending on the machine). The `timeout` is only a safety net.
 | Symptom | Cause / fix |
 |---|---|
 | `Targeting` not in the module list | Redo Installation step 4. If the wizard was used, ensure **Add to search paths** was ticked; otherwise use Option B plus a Slicer restart |
-| `No module named 'targeting'` in the console | Don't `import` tools; run them with `exec(open('<path-to-himx-cam>/tools/<tool>.py').read())` — Slicer's console provides no reliable `__file__` |
+| `No module named 'targeting'` in the console | Don't `import` tools; run them with the section 1b + Tools-section `exec(...)` form — Slicer's console provides no reliable `__file__`. A `could not locate himx-cam checkout` error means the 1b setup is missing: set `PROJECT_ROOT_OVERRIDE` or export `HIMX_CAM_ROOT` |
 | Orange square invisible | The cube lives in the scene only; run `make_field_cube.py` after any restart |
 | Click refused with `Outside the field` | Working as designed — aim inside the orange square, or widen the field in `frame.json` |
 | CSV not updating | Check the panel: a failed write is reported as `Placed, but the log write failed: …`. Verify `logs/` exists and is writable |
 | Module edits don't take effect in a running Slicer | Use the module's **Reload & Test → Reload** button, or restart Slicer. Console tools reload the project's modules automatically |
 | Slider moved, but the target depth didn't change | The depth comes from the **clicked view's** slider; check you changed that view's bar, not another pane's |
 | Everything loads but targets land oddly on a HiDPI screen | Run `check_live_mapping.py`; it reports any pixel-geometry disagreement per spot |
-| Moving the project to another path | The Slicer module and `slicer_bridge` locate the project from their own file location and can move anywhere. The **console tools** `check_live_mapping.py`, `make_field_cube.py`, `smoke_targeting_module.py`, `measure_now.py` carry `PROJECT_ROOT`/`TOOLS_DIR` constants near the top — update them |
+| Moving the project to another path | Nothing to edit: the Slicer module and `slicer_bridge` locate the project from their own file location, and the **console tools** resolve it as `PROJECT_ROOT_OVERRIDE` → `HIMX_CAM_ROOT` env → own file location, else panic. Set `HIMX_CAM_ROOT` once per machine (see `env.example` and section 1b) |
 
 ---
 

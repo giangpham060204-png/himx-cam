@@ -2,7 +2,7 @@
 
 Run in Slicer's Python Console:
 
-    exec(open('/home/gianghp/projects/himx-cam/tools/make_field_cube.py').read())
+    exec(open('<path-to-himx-cam>/tools/make_field_cube.py').read())
 
 A fresh Slicer session starts with an empty scene, and the cube is not saved
 anywhere, so it must be rebuilt after each Slicer restart. This script also
@@ -19,9 +19,47 @@ from __future__ import annotations
 
 import pathlib
 
-# Hardcoded on purpose: exec() in Slicer's console does not provide a truthful
-# __file__, so paths must not be derived from it. See check_live_mapping.py.
-PROJECT_ROOT = pathlib.Path("/home/gianghp/projects/himx-cam")
+# No hardcoded fallback: exec() in Slicer's console does not provide a
+# truthful __file__, so guessing silently lands somewhere else. Precedence:
+# PROJECT_ROOT_OVERRIDE global > HIMX_CAM_ROOT env > truthful __file__
+# marker walk > panic. See check_live_mapping.py.
+
+
+def _resolve_project_root(_globals=None, _env=None):
+    """Find the checkout root without scanning the disk.
+
+    No cwd or HOME crawl: only explicit override, env, or a __file__
+    that resolves to a real file under a marker (frame.json +
+    targeting/converter.py). Anything else panics instead of guessing.
+    """
+    import os
+
+    g = _globals if _globals is not None else globals()
+    e = _env if _env is not None else os.environ
+    override = g.get("PROJECT_ROOT_OVERRIDE")
+    if override:
+        return pathlib.Path(override)
+    env = e.get("HIMX_CAM_ROOT")
+    if env:
+        return pathlib.Path(env)
+    try:
+        here = pathlib.Path(__file__).resolve()
+    except NameError:
+        here = None
+    if here is not None and here.is_file():
+        for parent in [here.parent, *here.parents]:
+            if (parent / "frame.json").is_file() and (
+                parent / "targeting" / "converter.py"
+            ).is_file():
+                return parent
+    raise RuntimeError(
+        "could not locate himx-cam checkout (no fallback): set HIMX_CAM_ROOT "
+        "to the directory containing frame.json, or set PROJECT_ROOT_OVERRIDE "
+        f"in the Slicer console before exec(). __file__={here!r}"
+    )
+
+
+PROJECT_ROOT = _resolve_project_root()
 FRAME_PATH = PROJECT_ROOT / "frame.json"
 
 NODE_NAME = "FieldCube"

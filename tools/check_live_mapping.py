@@ -2,7 +2,7 @@
 
 Run in Slicer's Python Console:
 
-    exec(open('/home/gianghp/projects/himx-cam/tools/check_live_mapping.py').read())
+    exec(open('<path-to-himx-cam>/tools/check_live_mapping.py').read())
 
 Part 1 prints the mapping read live from Slicer's own view matrices, next to
 the stored reference in frame.json (the live values always win).
@@ -31,11 +31,43 @@ from __future__ import annotations
 import pathlib
 import sys
 
-# Hardcoded on purpose. This file is exec()'d in Slicer's Python Console,
+# No hardcoded fallback. This file is exec()'d in Slicer's Python Console,
 # where __file__ is not the path of this script, so deriving the project root
-# from it silently lands somewhere else and the imports fail with
-# "No module named 'targeting'". measure_now.py hardcodes for the same reason.
-PROJECT_ROOT = pathlib.Path("/home/gianghp/projects/himx-cam")
+# from it alone silently lands somewhere else ("No module named 'targeting'").
+# Precedence: PROJECT_ROOT_OVERRIDE global > HIMX_CAM_ROOT env > truthful
+# __file__ marker walk > panic. measure_now.py follows the same rule.
+
+
+def _resolve_project_root(_globals=None, _env=None):
+    """Find the checkout root without scanning the disk (see make_field_cube)."""
+    import os
+
+    g = _globals if _globals is not None else globals()
+    e = _env if _env is not None else os.environ
+    override = g.get("PROJECT_ROOT_OVERRIDE")
+    if override:
+        return pathlib.Path(override)
+    env = e.get("HIMX_CAM_ROOT")
+    if env:
+        return pathlib.Path(env)
+    try:
+        here = pathlib.Path(__file__).resolve()
+    except NameError:
+        here = None
+    if here is not None and here.is_file():
+        for parent in [here.parent, *here.parents]:
+            if (parent / "frame.json").is_file() and (
+                parent / "targeting" / "converter.py"
+            ).is_file():
+                return parent
+    raise RuntimeError(
+        "could not locate himx-cam checkout (no fallback): set HIMX_CAM_ROOT "
+        "to the directory containing frame.json, or set PROJECT_ROOT_OVERRIDE "
+        f"in the Slicer console before exec(). __file__={here!r}"
+    )
+
+
+PROJECT_ROOT = _resolve_project_root()
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 

@@ -2,7 +2,7 @@
 
 Run from Slicer's Python Console:
 
-    exec(open('/home/gianghp/projects/himx-cam/tools/make_refpoints.py').read())
+    exec(open('<path-to-himx-cam>/tools/make_refpoints.py').read())
 
 Why this is done numerically rather than by dragging: the reference points
 must sit at exact known values for the check to mean anything. Dragging with a
