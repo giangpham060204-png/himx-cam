@@ -36,8 +36,6 @@ from math import sqrt
 
 import cv2
 import matplotlib
-
-matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 
@@ -80,7 +78,7 @@ PROJECT_ROOT = _resolve_project_root()
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from targeting.optics import DEFAULT_MODULE, MODULES, Optics, optics_for  # noqa: E402
-from targeting.triangulation import camera_pose, triangulate  # noqa: E402
+from targeting.triangulation import camera_pose, project as project_point, triangulate  # noqa: E402
 
 # The printed square, and the resolution it is printed at.
 MARKER_MM = 40.0
@@ -163,6 +161,16 @@ def locate(projections, pixels):
     """Where the rays meet -- through the tested solver, not a copy of it."""
     plain = [np.asarray(P, float).tolist() for P in projections]
     return np.array(triangulate(plain, [tuple(float(c) for c in p) for p in pixels]))
+
+
+def reprojection_residual(projections, pixels, point):
+    """Per-camera pixel distance between where the point lands and where it was seen."""
+    residuals = []
+    for projection, pixel in zip(projections, pixels):
+        landed = project_point(np.asarray(projection, float).tolist(),
+                               tuple(float(value) for value in point))
+        residuals.append(float(np.linalg.norm(np.asarray(landed) - np.asarray(pixel, float))))
+    return residuals
 
 
 # --- the lens -------------------------------------------------------------
