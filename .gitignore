@@ -6,6 +6,9 @@ __pycache__/
 # Research data: per-target CSV logs
 logs/
 
+# Downloaded reference datasets (OpenCV stereo sample, etc.)
+data/
+
 # Project documentation and superpowers workspaces (kept local by request)
 docs/superpowers/
 .superpowers/

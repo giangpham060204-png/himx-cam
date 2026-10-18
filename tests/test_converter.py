@@ -18,8 +18,10 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 from targeting.converter import (  # noqa: E402
     OutOfFieldError,
     UnknownViewError,
+    check_in_field_ras,
     convert,
     cube_to_ras,
+    ras_to_cube,
 )
 from targeting.frame import Frame, make_test_frame  # noqa: E402
 
@@ -187,3 +189,25 @@ def test_cube_to_ras_follows_a_shifted_field():
     frame = make_test_frame(FIELD_MM, pixel_size_mm=1.0)
     frame.field_center_ras = {"R": 10.0, "A": 0.0, "S": 0.0}
     assert cube_to_ras((50.0, 50.0, 50.0), frame) == pytest.approx((10.0, 0.0, 0.0))
+
+
+def test_a_point_inside_the_field_is_accepted():
+    frame = make_test_frame(100.0, 1.0, {"R": 0.0, "A": 0.0, "S": 0.0})
+    check_in_field_ras({"R": 10.0, "A": -20.0, "S": 30.0}, frame)
+
+
+def test_a_point_on_the_boundary_is_accepted():
+    frame = make_test_frame(100.0, 1.0, {"R": 0.0, "A": 0.0, "S": 0.0})
+    check_in_field_ras({"R": 50.0, "A": -50.0, "S": 0.0}, frame)
+
+
+def test_a_point_outside_is_refused_by_axis():
+    frame = make_test_frame(100.0, 1.0, {"R": 0.0, "A": 0.0, "S": 0.0})
+    with pytest.raises(OutOfFieldError, match="A=60.000mm"):
+        check_in_field_ras({"R": 0.0, "A": 60.0, "S": 0.0}, frame)
+
+
+def test_ras_and_cube_are_inverses_of_each_other():
+    frame = make_test_frame(100.0, 1.0, {"R": 5.0, "A": -5.0, "S": 5.0})
+    cube = (12.0, 34.0, 56.0)
+    assert ras_to_cube(cube_to_ras(cube, frame), frame) == pytest.approx(cube)

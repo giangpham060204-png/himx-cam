@@ -26,6 +26,15 @@ def test_tools_expose_resolver():
         assert hasattr(mod, "_resolve_project_root"), f"{name} has no resolver"
 
 
+def test_the_camera_tool_exposes_resolver():
+    # it draws pictures, so it needs OpenCV and matplotlib before it can be
+    # imported at all -- on a machine without them there is nothing to check
+    pytest.importorskip("cv2")
+    pytest.importorskip("matplotlib")
+    mod = _load_tool("synthetic_camera")
+    assert hasattr(mod, "_resolve_project_root")
+
+
 def test_resolver_prefers_override_global(tmp_path):
     mod = _load_tool("make_field_cube")
     marker = tmp_path / "frame.json"
