@@ -38,6 +38,20 @@ def _check_in_field(value_mm, axis, low, high):
         )
 
 
+def check_in_field_ras(ras, frame: Frame) -> None:
+    """Raise OutOfFieldError unless this RAS point is inside the declared field.
+
+    The camera path arrives with a point, not with a view and a pixel, so it
+    needs the same rule without the pixel arithmetic around it. It doubles as
+    the unit check: a row mistakenly written in metres is caught by the same
+    bounds, so no separate unit heuristic is needed.
+    """
+    center = frame.field_center_ras
+    half = {axis: frame.field_size_mm[axis] / 2.0 for axis in RAS_AXES}
+    for axis in RAS_AXES:
+        _check_in_field(ras[axis], axis, center[axis] - half[axis], center[axis] + half[axis])
+
+
 def convert(view: str, u_px: float, v_px: float, depth_mm: float, frame: Frame):
     """Return the Cube-frame (x, y, z) in mm for a touch in `view`.
 
@@ -72,8 +86,7 @@ def convert(view: str, u_px: float, v_px: float, depth_mm: float, frame: Frame):
     axis, sign = binding["depth"]
     ras[axis] = center[axis] + sign * depth_mm
 
-    for axis in RAS_AXES:
-        _check_in_field(ras[axis], axis, center[axis] - half[axis], center[axis] + half[axis])
+    check_in_field_ras(ras, frame)
 
     # RAS to Cube: the project origin is the field's lower corner.
     return tuple(ras[axis] - (center[axis] - half[axis]) for axis in RAS_AXES)
@@ -88,5 +101,18 @@ def cube_to_ras(cube, frame: Frame):
     center = frame.field_center_ras
     return tuple(
         cube[i] + center[axis] - frame.field_size_mm[axis] / 2.0
+        for i, axis in enumerate(RAS_AXES)
+    )
+
+
+def ras_to_cube(ras, frame: Frame):
+    """Return the Cube-frame (x, y, z) for an RAS point (mm).
+
+    Cube counts from the field's lower corner; RAS counts from the field
+    centre. This is the inverse of cube_to_ras().
+    """
+    center = frame.field_center_ras
+    return tuple(
+        ras[i] - center[axis] + frame.field_size_mm[axis] / 2.0
         for i, axis in enumerate(RAS_AXES)
     )
