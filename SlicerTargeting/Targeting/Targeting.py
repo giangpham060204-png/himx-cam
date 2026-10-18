@@ -83,9 +83,19 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
         buttons.addWidget(self.openLogButton)
         form.addRow(buttons)
 
+        external = qt.QHBoxLayout()
+        self.loadExternalButton = qt.QPushButton("Load external targets")
+        external.addWidget(self.loadExternalButton)
+        form.addRow(external)
+
+        self.externalLabel = qt.QLabel("no camera targets loaded")
+        self.externalLabel.wordWrap = True
+        form.addRow(self.externalLabel)
+
         self.pickBox.toggled.connect(self.onPickToggled)
         self.clearButton.clicked.connect(self.onClear)
         self.openLogButton.clicked.connect(self.onOpenLog)
+        self.loadExternalButton.clicked.connect(self.onLoadExternal)
 
         self.layout.addStretch(1)
 
@@ -174,6 +184,24 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
     def onOpenLog(self, checked=False):
         LOGS_DIR.mkdir(parents=True, exist_ok=True)
         qt.QDesktopServices.openUrl(qt.QUrl.fromLocalFile(str(LOGS_DIR)))
+
+    def onLoadExternal(self):
+        try:
+            result = self.logic.load_external_targets()
+        except Exception as exc:            # noqa: BLE001 - shown to the operator
+            self.externalLabel.text = f"could not load: {exc}"
+            return
+        if result["status"] == "nothing":
+            self.externalLabel.text = (
+                f"no camera targets to show ({result['skipped']} row(s) skipped)"
+            )
+        else:
+            self.externalLabel.text = (
+                f"loaded {result['loaded']} camera target(s), "
+                f"{result['skipped']} row(s) skipped"
+            )
+        if result["problems"]:
+            self.externalLabel.text += f" — first: {result['problems'][0]}"
 
     def refresh_status(self):
         self.statusLabel.text = "Ready - tick Pick targets and click in a view."

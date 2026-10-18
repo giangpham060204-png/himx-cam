@@ -40,7 +40,7 @@ def trilaterate(cams, dists, prefer="high"):
     Subtracting sphere equations linearizes to 2 equations in 3 unknowns
     (a line); substituting back into one sphere equation gives a
     quadratic with 0-2 roots. `prefer="high"` picks the root above the
-    cameras' plane (the table约束: targets live above the table).
+    cameras' plane (the table constraint: targets live above the table).
     """
     A = 2 * (cams[1:] - cams[0])
     b = (dists[0] ** 2 - dists[1:] ** 2) + (

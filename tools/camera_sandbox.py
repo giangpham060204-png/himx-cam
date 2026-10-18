@@ -6,7 +6,11 @@ human clicking -- which is also what makes the window replaceable.
 
 Run the window with:
 
-    ~/.venvs/himx-cam/bin/python tools/camera_sandbox.py --out images
+    uv run tools/camera_sandbox.py
+
+or write the figures and exit, without a window:
+
+    uv run tools/camera_sandbox.py --out images
 
 Command-line handling lives in main(); this module's importable surface is the
 geometry and the two verbs, nominate() and place().
@@ -58,9 +62,9 @@ import numpy as np  # noqa: E402
 
 from targeting.converter import OutOfFieldError, check_in_field_ras, ras_to_cube  # noqa: E402
 from targeting.optics import DEFAULT_MODULE, MODULES, optics_for  # noqa: E402
-from targeting.rig import Rig, load_rig  # noqa: E402
+from targeting.rig import load_rig  # noqa: E402
 from targeting.triangulation import (camera_pose, project as project_point,  # noqa: E402
-                                    projection_matrix, triangulate)
+                                    projection_matrix, ray_for, triangulate)
 from targeting.camera_log import append_camera_target  # noqa: E402
 
 import frame_sources  # noqa: E402
@@ -275,7 +279,7 @@ class Sandbox:
         cube = ", ".join(f"{value:.1f}" for value in outcome.cube)
         ras = ", ".join(f"{value:.1f}" for value in outcome.ras)
         residuals = " · ".join(f"({value:.2f})" for value in outcome.residual_px)
-        return (
+        text = (
             f"cube ({cube}) mm      RAS ({ras}) mm\n"
             f"error {outcome.error_mm:.2f} mm against truth      "
             f"predicted {outcome.predicted_mm:.2f} mm at sigma "
@@ -283,6 +287,14 @@ class Sandbox:
             f"field inside\n"
             f"seen c1 c2 c3      residuals {residuals}"
         )
+        # A high residual is sometimes real, so the point stays placeable --
+        # but on real hardware there is no truth line, and this is the only
+        # quality signal the operator has.
+        worst = max(outcome.residual_px) if outcome.residual_px else 0.0
+        if worst > 2.0:
+            text += (f"\nwarning: residual {worst:.1f} px is high "
+                     f"-- check the marker and the lighting")
+        return text
 
 
 def where_it_lands(camera, point):
@@ -378,7 +390,7 @@ class SandboxWindow:
         self.figure.canvas.draw_idle()
 
     def _paint_scene(self):
-        """The three frusta, the marker, the true point and the one found."""
+        """The three frusta, the marker, the three rays, the true point and the one found."""
         pane = self.panes["scene"]
         pane.clear()
         markers = cam.marker_corners(self.sandbox.geometry.marker_mm)
@@ -389,6 +401,7 @@ class SandboxWindow:
         if self.sandbox.outcome is not None and self.sandbox.outcome.status == "found":
             pane.scatter(*self.sandbox.outcome.ras, color="tab:red", marker="x", s=90,
                          label="found from three rays")
+            self._paint_rays(pane)
         positions = self.sandbox.camera_positions()
         for index, position in enumerate(positions):
             pane.scatter(*position, color="tab:blue", s=40, marker="s")
@@ -397,6 +410,30 @@ class SandboxWindow:
         pane.set_ylabel("A (mm)")
         pane.set_zlabel("S (mm)")
         pane.legend(fontsize=7, loc="upper left")
+
+    def _paint_rays(self, pane):
+        """One line of sight per camera, from the pure ray each pixel saw.
+
+        The origin and direction come from ``ray_for`` applied to that
+        camera's own projection matrix and measured pixel, so nothing here
+        reaches below the frame-source seam for a pose. Each ray is drawn a
+        little past the found point, in rig coordinates -- the same frame the
+        camera glyphs are drawn in.
+        """
+        outcome = self.sandbox.outcome
+        rig_point = np.asarray(
+            self.sandbox.rig.to_rig(tuple(float(v) for v in outcome.ras)), float)
+        for camera, pixel in zip(self.sandbox.cameras, outcome.pixels):
+            origin, direction = ray_for(
+                np.asarray(camera.projection, float).tolist(),
+                (float(pixel[0]), float(pixel[1])))
+            origin = np.asarray(origin, float)
+            reach = float(np.linalg.norm(rig_point - origin))
+            if not np.isfinite(reach) or reach <= 0.0:
+                reach = float(self.sandbox.geometry.standoff)
+            tip = origin + np.asarray(direction, float) * reach * 1.1
+            pane.plot([origin[0], tip[0]], [origin[1], tip[1]], [origin[2], tip[2]],
+                      color="tab:blue", lw=1.0, alpha=0.55)
 
     def on_press(self, event):
         pane = self._camera_at(event)
@@ -426,7 +463,17 @@ class SandboxWindow:
         return None
 
     def place(self, logs_dir=None):
-        return self.sandbox.place(logs_dir)
+        """Write the accepted point, or repaint the hint when there is none.
+
+        Pressing `p` with nothing nominated raises in Sandbox; the operator
+        should get guidance (the readout's "click the object" hint), not a
+        console traceback.
+        """
+        try:
+            return self.sandbox.place(logs_dir)
+        except RuntimeError:
+            self._paint()
+            return None
 
     def save(self, path):
         self.figure.savefig(path, dpi=110, bbox_inches="tight")
@@ -462,10 +509,10 @@ def main(argv=None):
         matplotlib.use("Agg")
         out = pathlib.Path(args.out)
         out.mkdir(parents=True, exist_ok=True)
-        box.render_all()
         report = cam.build_report(optics, marker_mm=args.marker_mm,
                                   spread=args.spread, standoff=args.standoff,
-                                  frames=args.frames, trials=args.trials)
+                                  frames=args.frames, trials=args.trials,
+                                  aim=args.aim)
         cam.figure_views(report, out / "camera-views.png")
         cam.figure_accuracy(report, out / "camera-accuracy.png")
         print(cam.format_report(report))

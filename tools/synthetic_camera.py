@@ -504,9 +504,18 @@ def looks_like_the_law(measurements, distance_short, distance_long, spread):
 
 
 def build_report(optics, marker_mm=MARKER_MM, spread=150.0, standoff=500.0,
-                 trials=300, frames=15, seed=7):
-    """Measure the whole chain and judge every measurement, in one place."""
+                 trials=300, frames=15, seed=7, aim=AIM_OFFSET):
+    """Measure the whole chain and judge every measurement, in one place.
+
+    ``aim`` is where the three cameras look: the default in ``AIM_OFFSET``,
+    or a plain off-axis distance in mm, which is read as ``(aim, aim, 0)``
+    the way the sandbox's own geometry does.
+    """
     rng = np.random.default_rng(seed)
+    if isinstance(aim, (int, float)):
+        aim = (float(aim), float(aim), 0.0)
+    else:
+        aim = tuple(float(value) for value in aim)
     k1 = barrel_from_datasheet(optics)
     shifted = corner_shift_pixels(optics, k1)
     published = optics.distortion
@@ -528,7 +537,7 @@ def build_report(optics, marker_mm=MARKER_MM, spread=150.0, standoff=500.0,
     tight = {(row["standoff"]): row["rms"] for row in measurements if row["spread"] == 80.0}
     separation = all(wide[d] < tight[d] for d in distances)
 
-    run = end_to_end(optics, spread, standoff, rng)
+    run = end_to_end(optics, spread, standoff, rng, aim)
     careful_mm, lazy_mm, lost = off_axis_penalty(optics, spread, standoff, rng,
                                                  frames=min(frames, 10))
     predicted = sigma * float(np.linalg.norm(run["poses"][0][0])) ** 2 / (
@@ -573,7 +582,7 @@ def build_report(optics, marker_mm=MARKER_MM, spread=150.0, standoff=500.0,
         "sigma": sigma, "read": read, "detector": seen, "measurements": measurements,
         "run": run, "predicted_mm": predicted, "checks": checks,
         "off_axis_mm": (careful_mm, lazy_mm), "off_axis_lost": lost,
-        "spread": spread, "standoff": standoff,
+        "spread": spread, "standoff": standoff, "aim": tuple(aim),
     }
 
 

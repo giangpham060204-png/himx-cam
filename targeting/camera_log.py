@@ -82,7 +82,10 @@ def append_camera_target(logs_dir, *, cube, ras, residual_px, pixels,
     """
     path = camera_log_path(logs_dir, when)
     path.parent.mkdir(parents=True, exist_ok=True)
-    new_file = not path.exists()
+    # An existing file that is empty -- touched but never written -- holds no
+    # header, so the first row would land headerless and every later read
+    # would misparse it. Treat it as new.
+    new_file = not path.exists() or path.stat().st_size == 0
     row = format_camera_row(cube=cube, ras=ras, residual_px=residual_px,
                             pixels=pixels, source=source, when=when)
     with path.open("a", encoding="utf-8") as handle:

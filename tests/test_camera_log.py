@@ -137,6 +137,24 @@ def test_one_bad_row_does_not_lose_the_good_ones(tmp_path):
     assert len(log.problems) == 1
 
 
+def test_an_empty_existing_file_still_gets_a_header(tmp_path):
+    """A touched-but-empty file holds no header; the first row must not land bare."""
+    path = camera_log_path(tmp_path, WHEN)
+    path.touch()
+
+    out = append_camera_target(tmp_path, cube=CUBE, ras=RAS, residual_px=0.21,
+                               pixels=PIXELS, when=WHEN)
+
+    assert out == path
+    lines = path.read_text().splitlines()
+    assert lines[0] == ",".join(HEADER)
+    assert len(lines) == 2
+    log = read_camera_targets(path)
+    assert log.problems == ()
+    assert len(log.targets) == 1
+    assert log.targets[0].cube == pytest.approx(CUBE)
+
+
 def test_reading_a_missing_file_is_reported_not_raised(tmp_path):
     log = read_camera_targets(tmp_path / "nothing-here.csv")
 
