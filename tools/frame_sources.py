@@ -118,4 +118,11 @@ class CameraSource:
         ok, frame = self.capture.read()
         if not ok:
             raise RuntimeError(f"the camera at {self.device!r} gave no frame")
-        return cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        grey = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        expected = (self.optics.pixels_y, self.optics.pixels_x)
+        if grey.shape != expected:
+            raise RuntimeError(
+                f"the camera at {self.device!r} gives {grey.shape} frames, but the camera is "
+                f"{expected}; rescale the stream or fix the optics"
+            )
+        return grey

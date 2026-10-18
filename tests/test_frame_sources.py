@@ -99,6 +99,26 @@ def test_a_camera_that_is_not_there_says_so():
         source.grab()
 
 
+def test_a_camera_at_the_wrong_resolution_is_refused(tmp_path):
+    """Wrong-shaped pixels must never flow silently into undistortion (cv2 opens
+    files as readily as devices, so a short wrong-sized clip stands in)."""
+    path = tmp_path / "wrongsize.avi"
+    writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"MJPG"), 10.0,
+                             (160, 120), isColor=False)
+    if not writer.isOpened():
+        pytest.skip("this OpenCV build has no MJPG encoder")
+    writer.write(np.full((120, 160), 128, np.uint8))
+    writer.release()
+
+    source = frame_sources.CameraSource(str(path), OPTICS)
+    try:
+        with pytest.raises(RuntimeError, match="but the camera is"):
+            source.grab()
+    finally:
+        if source.capture is not None:
+            source.capture.release()
+
+
 def test_a_camera_record_carries_the_calibration_with_the_frames():
     K, poses, projections = a_scene()
     _, R, t = poses[0]

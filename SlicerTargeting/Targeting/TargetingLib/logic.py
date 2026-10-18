@@ -20,8 +20,10 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 import slicer_bridge.live_frame as bridge  # noqa: E402
+from targeting.camera_log import FILE_PREFIX, read_camera_targets  # noqa: E402
 from targeting.converter import (  # noqa: E402
     OutOfFieldError,
+    check_in_field_ras,
     convert,
     cube_to_ras,
 )
@@ -30,6 +32,8 @@ from targeting.logbook import append_target  # noqa: E402
 LOGS_DIR = PROJECT_ROOT / "logs"
 TIP_NODE_NAME = "VirtualTip"
 TARGETS_NODE_NAME = "Targets"
+EXTERNAL_NODE_NAME = "ExternalTargets"
+EXTERNAL_COLOUR = (1.0, 0.55, 0.1)
 VIEW_WIDGETS = {"XY": "Red", "XZ": "Green", "YZ": "Yellow"}
 
 
@@ -204,6 +208,64 @@ class TargetingLogic(ScriptedLoadableModuleLogic):
 
         self.placed += 1
         return outcome
+
+    def external_targets_node(self):
+        """The node holding camera-derived points. Rebuilt on every load.
+
+        Kept apart from the clicked targets so that a glance tells you which is
+        which, and rebuilt rather than appended to, so pressing the button twice
+        cannot duplicate anything.
+        """
+        node = slicer.mrmlScene.GetFirstNodeByName(EXTERNAL_NODE_NAME)
+        if node is not None:
+            slicer.mrmlScene.RemoveNode(node)
+        node = slicer.mrmlScene.AddNewNodeByClass(
+            "vtkMRMLMarkupsFiducialNode", EXTERNAL_NODE_NAME
+        )
+        display = self._display(node, EXTERNAL_COLOUR)
+        display.SetPointLabelsVisibility(True)
+        display.SetGlyphScale(4.0)
+        return node
+
+    def load_external_targets(self, logs_dir=None):
+        """Show every camera-derived target in the scene. Returns a summary.
+
+        Rows that cannot be read, or that fall outside the field, are counted and
+        named rather than dropped in silence. The field rule used here is the
+        same one the click path uses, and it is checked against the live frame --
+        so a row written while the field was elsewhere is refused, with the axis
+        named.
+        """
+        logs_dir = LOGS_DIR if logs_dir is None else pathlib.Path(logs_dir)
+        problems, good = [], []
+        frame = bridge.live_frame()
+        for path in sorted(logs_dir.glob(f"{FILE_PREFIX}*.csv")):
+            log = read_camera_targets(path)
+            problems.extend(log.problems)
+            for target in log.targets:
+                ras = dict(zip(("R", "A", "S"), target.ras))
+                try:
+                    check_in_field_ras(ras, frame)
+                except OutOfFieldError as exc:
+                    problems.append(f"{path.name}: {exc}")
+                    continue
+                good.append(target.ras)
+
+        if not good:
+            return {"status": "nothing", "loaded": 0, "skipped": len(problems),
+                    "problems": tuple(problems), "node_name": EXTERNAL_NODE_NAME}
+
+        node = self.external_targets_node()
+        for index, ras in enumerate(good, start=1):
+            at = node.AddControlPoint(ras[0], ras[1], ras[2])
+            try:
+                node.SetNthControlPointLabel(at, f"C{index}")
+            except Exception:
+                node.RemoveNthControlPoint(at)
+                raise
+        self.move_tip(good[-1])
+        return {"status": "loaded", "loaded": len(good), "skipped": len(problems),
+                "problems": tuple(problems), "node_name": EXTERNAL_NODE_NAME}
 
     def clear_targets(self):
         node = slicer.mrmlScene.GetFirstNodeByName(TARGETS_NODE_NAME)

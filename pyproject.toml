@@ -1,0 +1,23 @@
+# This manifest exists to build one environment for `tools/`, the half of the
+# repository that needs third-party packages. It is deliberately not a package:
+# there is no [build-system] table, so uv does not try to build or install the
+# repository itself — `uv sync` only resolves the dependencies below into .venv.
+#
+# `targeting/` needs none of this. It is standard library only, which is why the
+# Slicer half of the project can import it with Slicer's own interpreter.
+
+[project]
+name = "himx-cam"
+version = "0.1.0"
+description = "Touch-guided 3D targeting for 3D Slicer, with three HM01B0 cameras"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    # contrib, not base: the detector uses cv2.aruco, which lives in the contrib wheel
+    "opencv-contrib-python-headless>=4.8",
+    "numpy>=1.26",
+    "matplotlib>=3.8",
+]
+
+[dependency-groups]
+dev = ["pytest>=8"]

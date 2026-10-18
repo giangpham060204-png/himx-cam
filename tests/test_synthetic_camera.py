@@ -185,6 +185,17 @@ def test_main_fails_when_the_marker_cannot_be_read(tmp_path):
     assert bad == 1
 
 
+def test_build_report_honours_the_aim_it_is_given():
+    """--aim must move the figures: aiming far off must move the geometry."""
+    default = cam.build_report(OPTICS, trials=5, frames=2)
+    off_axis = cam.build_report(OPTICS, trials=5, frames=2, aim=(300.0, 300.0, 0.0))
+
+    assert off_axis["aim"] == (300.0, 300.0, 0.0)
+    default_P = [np.asarray(P) for P in default["run"]["projections"]]
+    off_P = [np.asarray(P) for P in off_axis["run"]["projections"]]
+    assert any(not np.allclose(a, b) for a, b in zip(default_P, off_P))
+
+
 def test_a_cached_render_is_byte_identical_to_a_fresh_one():
     """The whole point of caching is that nothing changes but the speed."""
     rng = np.random.default_rng(5)

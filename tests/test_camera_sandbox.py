@@ -166,7 +166,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
-from matplotlib.backend_bases import MouseEvent  # noqa: E402
+from matplotlib.backend_bases import KeyEvent, MouseEvent  # noqa: E402
 
 
 def a_window():
@@ -230,6 +230,17 @@ def test_a_click_while_a_nomination_is_shown_replaces_it():
     assert second.status == "found"
 
 
+def test_pressing_place_with_nothing_nominated_explains_rather_than_crashes():
+    """`p` on a fresh window must repaint the hint, not leak a traceback."""
+    window = a_window()
+    event = KeyEvent("key_press_event", window.figure.canvas, "p")
+
+    window.on_key(event)  # must not raise
+
+    assert window.sandbox.outcome is None
+    assert "click the object" in window.sandbox.readout()
+
+
 def test_the_headless_run_writes_both_figures_and_opens_no_window(tmp_path):
     code = camera_sandbox.main(["--out", str(tmp_path), "--frames", "2", "--trials", "20"])
 
@@ -251,6 +262,36 @@ def test_the_readout_carries_the_numbers_and_the_verdicts():
     assert "predicted" in text
     assert "inside" in text
     assert "c1" in text and "c2" in text and "c3" in text
+
+
+def test_the_readout_warns_when_the_residual_is_high_but_stays_placeable(tmp_path):
+    """Above 2 px the operator gets a warning, not a refusal (spec 7.2)."""
+    box = a_sandbox()
+    box.sigma = 0.30  # the warning is about the residual, not the detector
+    box.outcome = camera_sandbox.Outcome(
+        status="found", pixels=((160.0, 160.0), (158.5, 161.25), (161.0, 159.0)),
+        cube=(50.0, 50.0, 50.0), ras=(0.0, 0.0, 0.0),
+        residual_px=(2.7, 0.21, 0.19), error_mm=0.73, predicted_mm=0.76,
+    )
+
+    text = box.readout()
+
+    assert "warning" in text
+    assert "2.7" in text
+    box.place(tmp_path)
+    assert list(tmp_path.glob("camera-targets-*.csv")) != []
+
+
+def test_the_readout_stays_quiet_when_the_residual_is_small():
+    box = a_sandbox()
+    box.sigma = 0.30
+    box.outcome = camera_sandbox.Outcome(
+        status="found", pixels=((160.0, 160.0), (158.5, 161.25), (161.0, 159.0)),
+        cube=(50.0, 50.0, 50.0), ras=(0.0, 0.0, 0.0),
+        residual_px=(0.21, 0.18, 0.24), error_mm=0.73, predicted_mm=0.76,
+    )
+
+    assert "warning" not in box.readout()
 
 
 def test_the_readout_says_why_when_nothing_was_found():
