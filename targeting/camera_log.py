@@ -26,10 +26,15 @@ HEADER = (
     "timestamp", "source", "cube_x", "cube_y", "cube_z",
     "ras_r", "ras_a", "ras_s", "residual_px",
     "u1_px", "v1_px", "u2_px", "v2_px", "u3_px", "v3_px",
+    "found_by",
 )
 
-# Read by name, never by position.
-REQUIRED = HEADER
+# What a file must carry before one row of it can be read. Deliberately not
+# HEADER: `found_by` was added after the first logs were written, and a file
+# without it is readable -- absence means the row was detected, which is what
+# those rows were. A column the reader requires and a column the writer emits
+# are two different things; conflating them would make old logs unreadable.
+REQUIRED = HEADER[:-1]
 
 FILE_PREFIX = "camera-targets-"
 CAMERA_COUNT = 3
@@ -45,6 +50,7 @@ class CameraTarget:
     ras: tuple
     residual_px: float
     pixels: tuple          # one (u, v) per camera, in camera order
+    found_by: str = "detected"     # detected | manual
 
 
 @dataclass(frozen=True)
@@ -60,7 +66,8 @@ def camera_log_path(logs_dir, when=None) -> Path:
     return Path(logs_dir) / f"{FILE_PREFIX}{when:%Y-%m-%d}.csv"
 
 
-def format_camera_row(*, cube, ras, residual_px, pixels, source="simulator", when=None) -> str:
+def format_camera_row(*, cube, ras, residual_px, pixels, source="simulator",
+                      found_by="detected", when=None) -> str:
     when = when or datetime.now()
     flat = [value for pair in pixels for value in pair]
     return ",".join((
@@ -70,11 +77,12 @@ def format_camera_row(*, cube, ras, residual_px, pixels, source="simulator", whe
         *(f"{value:.3f}" for value in ras),
         f"{residual_px:.4f}",
         *(f"{value:.2f}" for value in flat),
+        found_by,
     ))
 
 
 def append_camera_target(logs_dir, *, cube, ras, residual_px, pixels,
-                         source="simulator", when=None) -> Path:
+                         source="simulator", found_by="detected", when=None) -> Path:
     """Append one accepted camera target; returns the file it went into.
 
     Raises OSError when the location cannot be written, so the caller can tell
@@ -87,7 +95,7 @@ def append_camera_target(logs_dir, *, cube, ras, residual_px, pixels,
     # would misparse it. Treat it as new.
     new_file = not path.exists() or path.stat().st_size == 0
     row = format_camera_row(cube=cube, ras=ras, residual_px=residual_px,
-                            pixels=pixels, source=source, when=when)
+                            pixels=pixels, source=source, found_by=found_by, when=when)
     with path.open("a", encoding="utf-8") as handle:
         if new_file:
             handle.write(",".join(HEADER) + "\n")
@@ -130,14 +138,20 @@ def _parse_row(row):
     # under a None key. Either way the row does not match its own header.
     # Deliberately NOT a length check: a file with a future extra column is
     # read happily, by name, and that is the whole point of reading by name.
+    # The messages name no count on purpose -- HEADER and REQUIRED no longer
+    # hold the same number of names, so any count quoted here would be wrong
+    # for one of the two kinds of file.
     if None in row:
-        raise ValueError(f"more than {len(HEADER)} values")
+        raise ValueError("more values than the header names")
     if None in row.values():
-        raise ValueError(f"fewer than {len(HEADER)} values")
+        raise ValueError("fewer values than the header names")
     pixels = tuple(
         (float(row[f"u{index}_px"]), float(row[f"v{index}_px"]))
         for index in range(1, CAMERA_COUNT + 1)
     )
+    found_by = row.get("found_by") or "detected"
+    if found_by not in ("detected", "manual"):
+        found_by = "detected"
     return CameraTarget(
         timestamp=row["timestamp"],
         source=row["source"],
@@ -145,4 +159,5 @@ def _parse_row(row):
         ras=tuple(float(row[name]) for name in ("ras_r", "ras_a", "ras_s")),
         residual_px=float(row["residual_px"]),
         pixels=pixels,
+        found_by=found_by,
     )

@@ -16,6 +16,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 from targeting.camera_log import (  # noqa: E402
     HEADER,
+    REQUIRED,
     append_camera_target,
     camera_log_path,
     format_camera_row,
@@ -35,6 +36,7 @@ def test_the_header_is_the_declared_one():
         "timestamp", "source", "cube_x", "cube_y", "cube_z",
         "ras_r", "ras_a", "ras_s", "residual_px",
         "u1_px", "v1_px", "u2_px", "v2_px", "u3_px", "v3_px",
+        "found_by",
     )
 
 
@@ -160,3 +162,61 @@ def test_reading_a_missing_file_is_reported_not_raised(tmp_path):
 
     assert log.targets == ()
     assert "nothing-here.csv" in log.problems[0]
+
+
+def test_the_reader_does_not_require_a_column_it_can_default():
+    """REQUIRED is what a file must have; HEADER is what a new file carries.
+
+    `found_by` arrived after the first logs were written, and a file without it
+    is readable: absence means the row was detected, which is what those rows
+    were. Conflating the two would make every existing log unreadable.
+    """
+    assert "found_by" not in REQUIRED
+    assert set(REQUIRED) < set(HEADER)
+
+
+def test_a_row_says_whether_a_human_placed_it_by_hand(tmp_path):
+    path = append_camera_target(tmp_path, cube=CUBE, ras=RAS, residual_px=4.5,
+                                pixels=PIXELS, found_by="manual", when=WHEN)
+
+    log = read_camera_targets(path)
+
+    assert log.problems == ()
+    assert log.targets[0].found_by == "manual"
+
+
+def test_an_ordinary_row_says_detected(tmp_path):
+    path = append_camera_target(tmp_path, cube=CUBE, ras=RAS, residual_px=0.21,
+                                pixels=PIXELS, when=WHEN)
+
+    assert read_camera_targets(path).targets[0].found_by == "detected"
+
+
+def test_a_file_written_before_this_column_existed_still_reads(tmp_path):
+    """Every row already in logs/ was detected, so that default is true, not convenient."""
+    path = tmp_path / "camera-targets-2026-10-11.csv"
+    path.write_text(
+        "timestamp,source,cube_x,cube_y,cube_z,ras_r,ras_a,ras_s,residual_px,"
+        "u1_px,v1_px,u2_px,v2_px,u3_px,v3_px\n"
+        "2026-10-11T23:06:11,simulator,50.000,50.000,50.000,"
+        "0.000,0.000,0.000,0.1000,10.00,10.00,10.00,10.00,10.00,10.00\n",
+        encoding="utf-8")
+
+    log = read_camera_targets(path)
+
+    assert log.problems == ()
+    assert log.targets[0].found_by == "detected"
+    assert log.targets[0].cube == pytest.approx((50.0, 50.0, 50.0))
+
+
+def test_an_unknown_provenance_reads_as_the_weaker_claim(tmp_path):
+    """`auto` is not a provenance this log writes; suspect evidence reads as detected."""
+    path = tmp_path / "camera-targets-2026-10-19.csv"
+    row = format_camera_row(cube=CUBE, ras=RAS, residual_px=0.21, pixels=PIXELS,
+                            found_by="auto", when=WHEN)
+    path.write_text(",".join(HEADER) + "\n" + row + "\n", encoding="utf-8")
+
+    log = read_camera_targets(path)
+
+    assert log.problems == ()
+    assert log.targets[0].found_by == "detected"
