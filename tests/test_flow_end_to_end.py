@@ -4,6 +4,7 @@ This is the flow the spec exists for: nominate, solve, record, read back. It
 runs the exact sequence that would otherwise be clicked by hand.
 """
 
+import json
 import pathlib
 import sys
 
@@ -19,6 +20,7 @@ import camera_sandbox  # noqa: E402
 import frame_sources  # noqa: E402
 import synthetic_camera as cam  # noqa: E402
 from targeting.camera_log import read_camera_targets  # noqa: E402
+from targeting.clicks import CLICKS_FILE  # noqa: E402
 from targeting.frame import Frame  # noqa: E402
 from targeting.optics import optics_for  # noqa: E402
 from targeting.rig import Rig  # noqa: E402
@@ -94,3 +96,26 @@ def test_a_sandbox_handed_frames_cannot_claim_to_know_the_truth():
     assert outcome.error_mm is None
     assert "against truth" not in box.readout()
     assert "truth unknown" in box.readout()
+
+
+def test_the_pictures_slicer_shows_solve_to_the_marker_they_draw(tmp_path):
+    """Frames written for Slicer, clicked at the marker, solved back to it.
+
+    The clicks are produced by the same projection that solves, so this pins the
+    interface rather than the optics: the three pixels must be read in camera
+    order, or the point lands somewhere else entirely.
+    """
+    code = camera_sandbox.main(["--write-frames", str(tmp_path)])
+    assert code == 0
+    box = build(seed=4)
+    box.render_all()
+    pixels = [camera_sandbox.where_it_lands(camera, np.array([[0.0, 0.0, 0.0]]))
+              for camera in box.cameras]
+    (tmp_path / CLICKS_FILE).write_text(
+        json.dumps({"pixels": [list(map(float, pixel)) for pixel in pixels]}),
+        encoding="utf-8")
+
+    applied, _ = box.follow_clicks(tmp_path)
+
+    assert applied is True
+    assert box.outcome.cube == pytest.approx((50.0, 50.0, 50.0), abs=2.0)
