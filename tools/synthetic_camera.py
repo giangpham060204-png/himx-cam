@@ -345,6 +345,18 @@ def detect_marker(frame, ardetector):
     return np.asarray(corners[0], dtype=np.float64).reshape(-1, 2)
 
 
+def marker_centre(frame, optics):
+    """The marker's corners with the lens removed, and the centre of them.
+
+    Raises RuntimeError when the marker cannot be read, so a caller that needs
+    a measurement is told, rather than handed a plausible corner somewhere else
+    in the picture.
+    """
+    corners = detect_marker(frame, detector())
+    ideal = straight_lens(corners, optics)
+    return ideal, diagonal_crossing(ideal)
+
+
 def diagonal_crossing(corners):
     """Where the diagonals of a quadrilateral meet.
 

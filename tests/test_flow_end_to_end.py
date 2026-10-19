@@ -77,3 +77,20 @@ def test_the_answer_does_not_depend_on_where_the_frames_came_from():
 
     assert rendered.status == "found" and replayed.status == "found"
     assert replayed.cube == pytest.approx(rendered.cube, abs=1e-6)
+
+
+def test_a_sandbox_handed_frames_cannot_claim_to_know_the_truth():
+    """It did not place the marker, so it must not report how far off it was."""
+    rendered_box = build(seed=4)
+    rendered_box.render_all()
+    stored = [frame.copy() for frame in rendered_box.frames]
+    box = build(seed=4, sources=[frame_sources.StoredFrames([frame]) for frame in stored])
+    box.render_all()
+    target = camera_sandbox.where_it_lands(box.cameras[0], (0.0, 0.0, 0.0))
+
+    outcome = box.nominate(0, target[0], target[1])
+
+    assert outcome.status == "found"
+    assert outcome.error_mm is None
+    assert "against truth" not in box.readout()
+    assert "truth unknown" in box.readout()

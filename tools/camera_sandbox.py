@@ -66,6 +66,7 @@ from targeting.rig import load_rig  # noqa: E402
 from targeting.triangulation import (camera_pose, project as project_point,  # noqa: E402
                                     projection_matrix, ray_for, triangulate)
 from targeting.camera_log import append_camera_target  # noqa: E402
+from targeting.logbook import newest_target  # noqa: E402
 
 import frame_sources  # noqa: E402
 import synthetic_camera as cam  # noqa: E402
@@ -73,8 +74,18 @@ import synthetic_camera as cam  # noqa: E402
 # A real detector on a real sensor does not do better than about this.
 PIXEL_SIGMA_FLOOR = 0.1
 
+# What a hand-placed pixel is worth. A careful operator clicking a marker tens of
+# pixels across lands within a few pixels; quoting the detector's 0.3 px here
+# would claim a precision the measurement does not have, and pretending
+# otherwise is the one thing this mode exists to make visible.
+CLICK_SIGMA_PX = 5.0
+
 
 LOGS_DIR = PROJECT_ROOT / "logs"
+
+# Colour says which camera; shape says what the thing is. The three colours are
+# also the three marks a reader can name out loud, so nothing else may use them.
+CAMERA_COLOURS = ("tab:red", "tab:green", "tab:orange")
 
 
 @dataclass(frozen=True)
@@ -100,6 +111,20 @@ class Outcome:
     residual_px: tuple = ()
     error_mm: float = None          # against the truth; None when nothing was found
     predicted_mm: float = None      # what a given pixel sigma would give
+    sigma_px: float = None          # the sigma that prediction used
+    found_by: str = "detected"      # detected | manual
+
+
+@dataclass(frozen=True)
+class Repeat:
+    """How much the same object moved while it was measured `runs` times over."""
+
+    runs: int
+    found: int
+    failed: int
+    mean: tuple = None
+    std_mm: tuple = None
+    max_mm: float = None
 
 
 class Sandbox:
@@ -119,6 +144,10 @@ class Sandbox:
         self.rng = np.random.default_rng(seed)
         self.frames = []
         self.outcome = None
+        self.repeat_result = None
+        self.hypothesis_cube = None
+        self.hypothesis_ras = None
+        self.hypothesis_note = ""
         self.rebuild()
 
     # -- geometry ------------------------------------------------------
@@ -142,6 +171,7 @@ class Sandbox:
             ))
         self.frames = []
         self.outcome = None
+        self.repeat_result = None
 
     def camera_positions(self):
         """Where the three cameras stand, for the current geometry."""
@@ -151,21 +181,34 @@ class Sandbox:
         return [np.array([r * math.cos(a), r * math.sin(a), self.geometry.standoff + h])
                 for r, a, h in zip(radii, angles, heights)]
 
+    @property
+    def simulated(self):
+        """Did this sandbox place the marker, or was it handed its pictures?
+
+        Only when the scene was generated here does the code know where the
+        marker is. With recorded or live frames there is no truth to compare
+        against, and reporting one anyway would be a plausible wrong number --
+        the worst outcome this project recognises.
+        """
+        return self.sources is None
+
     # -- seeing --------------------------------------------------------
 
     def render_all(self):
-        """Draw one frame per camera. The only expensive step in the module."""
+        """Ask every source for its next frame. The only expensive step here.
+
+        In the sandbox that is a render; on a rig it is a capture. Nothing above
+        this line may care which.
+        """
         self.frames = [camera.source.grab() for camera in self.cameras]
         return self.frames
 
     def _detect(self, index):
         """The corners and the centre of the marker in one camera, or None."""
         try:
-            corners = cam.detect_marker(self.frames[index], cam.detector())
+            return cam.marker_centre(self.frames[index], self.optics)
         except RuntimeError:
             return None
-        ideal = cam.straight_lens(corners, self.optics)
-        return ideal, cam.diagonal_crossing(ideal)
 
     # -- the verbs -----------------------------------------------------
 
@@ -189,7 +232,38 @@ class Sandbox:
             return self._remember(Outcome(
                 status="not-on-object", message="click the object",
             ))
+        self.repeat_result = None
+        return self._remember(self._measure())
 
+    def nominate_manually(self, pixels):
+        """Solve for a point from three hand-placed pixels, one per camera.
+
+        No detector is involved: whatever the operator clicked *is* the
+        measurement. That is why the predicted error quotes the click sigma
+        rather than the detector's -- three hand-placed lines of sight do not
+        meet, and the residual says by how much.
+        """
+        pixels = tuple(tuple(float(value) for value in pixel) for pixel in pixels)
+        if len(pixels) != len(self.cameras):
+            raise ValueError(
+                f"a manual nomination needs one pixel from each of the "
+                f"{len(self.cameras)} cameras, got {len(pixels)}")
+        try:
+            point = triangulate([camera.projection.tolist() for camera in self.cameras],
+                                pixels)
+        except ValueError as exc:
+            return self._remember(Outcome(status="degenerate", message=str(exc)))
+        self.repeat_result = None
+        return self._remember(self._finish(point, pixels, found_by="manual",
+                                          sigma=CLICK_SIGMA_PX))
+
+    def _measure(self):
+        """Detect the marker in every camera and solve for the point.
+
+        The click says which object; this turns pictures into numbers. It is the
+        same code path whether it runs once, for a click, or `times` times over,
+        for a repeat, so a repeat cannot quietly measure something else.
+        """
         seen, missing = [], []
         for index in range(len(self.cameras)):
             found = self._detect(index)
@@ -198,37 +272,36 @@ class Sandbox:
             else:
                 seen.append(found[1])
         if missing:
-            return self._remember(Outcome(
-                status="not-readable",
-                message=f"{', '.join(missing)} cannot read the marker",
-            ))
-
+            return Outcome(status="not-readable",
+                           message=f"{', '.join(missing)} cannot read the marker")
         try:
             point = triangulate([camera.projection.tolist() for camera in self.cameras],
                                 [tuple(float(c) for c in pixel) for pixel in seen])
         except ValueError as exc:
-            return self._remember(Outcome(status="degenerate", message=str(exc)))
+            return Outcome(status="degenerate", message=str(exc))
+        return self._finish(point, seen, found_by="detected", sigma=self.effective_sigma())
 
+    def _finish(self, point, pixels, *, found_by, sigma):
+        """Turn a solved point into an Outcome, or into the reason it is refused."""
         point = np.asarray(point, float)
         ras = self.rig.to_ras(tuple(point))
         try:
             check_in_field_ras(dict(zip(("R", "A", "S"), ras)), self.frame)
         except OutOfFieldError as exc:
-            return self._remember(Outcome(status="outside-field", message=str(exc)))
-
-        residual = cam.reprojection_residual([camera.projection for camera in self.cameras],
-                                             seen, point)
-        truth_error = float(np.linalg.norm(point))
-        return self._remember(Outcome(
+            return Outcome(status="outside-field", message=str(exc))
+        return Outcome(
             status="found",
             message="",
-            pixels=tuple(tuple(float(c) for c in pixel) for pixel in seen),
+            pixels=tuple(tuple(float(c) for c in pixel) for pixel in pixels),
             cube=ras_to_cube(ras, self.frame),
             ras=ras,
-            residual_px=tuple(residual),
-            error_mm=truth_error,
-            predicted_mm=self._predicted(),
-        ))
+            residual_px=tuple(cam.reprojection_residual(
+                [camera.projection for camera in self.cameras], pixels, point)),
+            error_mm=(float(np.linalg.norm(point)) if self.simulated else None),
+            predicted_mm=self._predicted(sigma),
+            sigma_px=float(sigma),
+            found_by=found_by,
+        )
 
     def place(self, logs_dir=None):
         """Write the accepted point to the camera log. Returns the file."""
@@ -242,6 +315,7 @@ class Sandbox:
             ras=self.outcome.ras,
             residual_px=float(np.mean(self.outcome.residual_px)),
             pixels=self.outcome.pixels,
+            found_by=self.outcome.found_by,
         )
 
     # -- helpers -------------------------------------------------------
@@ -250,11 +324,121 @@ class Sandbox:
         self.outcome = outcome
         return outcome
 
-    def _predicted(self):
-        sigma = max(self.effective_sigma(), PIXEL_SIGMA_FLOOR)
+    def repeat(self, times=8):
+        """Measure the same object `times` times over and report how much it moves.
+
+        This is repeatability, not accuracy: nothing here knows where the object
+        really is. Each run asks every source for a fresh frame -- a real camera
+        never repeats itself, and neither may the renderer, or this would measure
+        nothing at all. On hardware the spread also carries whatever moved
+        between the grabs, which is the point of having it.
+        """
+        if times < 2:
+            raise ValueError("a repeat needs at least two runs")
+        cubes, failed = [], 0
+        for _ in range(times):
+            self.render_all()
+            outcome = self._measure()
+            if outcome.status == "found":
+                cubes.append(outcome.cube)
+            else:
+                failed += 1
+        self.outcome = None          # found against frames that no longer exist
+        if cubes:
+            stacked = np.asarray(cubes, float)
+            mean = stacked.mean(axis=0)
+            self.repeat_result = Repeat(
+                runs=times, found=len(cubes), failed=failed,
+                mean=tuple(float(value) for value in mean),
+                std_mm=tuple(float(value) for value in stacked.std(axis=0)),
+                max_mm=float(np.max(np.linalg.norm(stacked - mean, axis=1))),
+            )
+        else:
+            self.repeat_result = Repeat(runs=times, found=0, failed=failed)
+        return self.repeat_result
+
+    def load_hypothesis(self, logs_dir=None):
+        """Load the newest point a human placed in Slicer, to be checked.
+
+        A hypothesis is not a measurement and is never logged: the camera log
+        holds what the cameras saw, and letting a guess in would cost it the
+        only property worth having.
+        """
+        target, note = newest_target(
+            LOGS_DIR if logs_dir is None else pathlib.Path(logs_dir))
+        self.hypothesis_note = note
+        if target is None:
+            self.hypothesis_cube = None
+            self.hypothesis_ras = None
+            return note
+        self.hypothesis_cube = tuple(float(value) for value in target.cube)
+        self.hypothesis_ras = tuple(float(value) for value in target.ras)
+        return note
+
+    def clear_hypothesis(self):
+        """Forget the loaded hypothesis and the note that came with it."""
+        self.hypothesis_cube = None
+        self.hypothesis_ras = None
+        self.hypothesis_note = ""
+
+    @property
+    def hypothesis_point(self):
+        """The hypothesis in the rig frame, where the projections live."""
+        if self.hypothesis_ras is None:
+            return None
+        return np.asarray(self.rig.to_rig(self.hypothesis_ras), float)
+
+    def _predicted(self, sigma=None):
+        """What a pixel sigma this size would cost at this rig's geometry."""
+        sigma = max(self.effective_sigma() if sigma is None else float(sigma),
+                    PIXEL_SIGMA_FLOOR)
         distance = math.sqrt(self.geometry.spread ** 2 + self.geometry.standoff ** 2)
         baseline = cam.pairwise_baseline(self.geometry.spread, self.geometry.standoff)
         return sigma * distance ** 2 / (self.optics.focal_length_pixels * baseline)
+
+    def _repeat_tail(self):
+        """The repeat line when there is one, else nothing at all."""
+        if self.repeat_result is None:
+            return ""
+        return "\n" + self._repeat_line()
+
+    def _repeat_line(self):
+        """The last repeat as one line, or why there is nothing to report."""
+        result = self.repeat_result
+        if result.found == 0:
+            return (f"repeat {result.runs}: nothing found in any run "
+                    f"({result.failed} failed) -- check the marker and the lighting")
+        spread = ", ".join(f"{value:.2f}" for value in result.std_mm)
+        line = (f"repeat {result.runs}: spread std ({spread}) mm, "
+                f"worst {result.max_mm:.2f} mm -- repeatability, not accuracy")
+        if result.failed:
+            line += f", {result.failed} failed"
+        if result.max_mm == 0.0:
+            # A renderer asked for the same scene twice returns pictures whose
+            # noise differs and whose detected corners do not: OpenCV's corner
+            # estimate is bit-identical across those grabs. A zero spread is
+            # therefore true and uninformative, and reading it as "the detector
+            # is perfect" would be the wrong lesson.
+            line += ("  (an unchanged synthetic scene repeats exactly, so this "
+                     "says nothing about the detector; on hardware the spread "
+                     "will be larger)")
+        return line
+
+    def _hypothesis_tail(self):
+        """The loaded Slicer point, and how far the measurement sits from it."""
+        if self.hypothesis_cube is not None:
+            cube = ", ".join(f"{value:.1f}" for value in self.hypothesis_cube)
+            text = (f"\nhypothesis from Slicer: cube ({cube}) mm"
+                    f" -- a human's point, not a measurement")
+            if self.outcome is not None and self.outcome.status == "found":
+                apart = float(np.linalg.norm(
+                    np.asarray(self.outcome.cube, float)
+                    - np.asarray(self.hypothesis_cube, float)))
+                text += f"\nmeasured point is {apart:.1f} mm from the hypothesis"
+            return text
+        elif self.hypothesis_note:
+            return f"\nno hypothesis: {self.hypothesis_note}"
+        return ""
 
     def effective_sigma(self):
         """The detector's scatter, measured once on rendered frames."""
@@ -273,20 +457,30 @@ class Sandbox:
         """
         outcome = self.outcome
         if outcome is None:
-            return "click the object to nominate a target   (r render, p place, s save, q quit)"
+            hint = ("click the object to nominate a target   "
+                    "(m manual, n repeat, l slicer, c clear, "
+                    "r render, p place, s save, q quit)")
+            return hint + self._repeat_tail() + self._hypothesis_tail()
         if outcome.status != "found":
-            return f"{outcome.status}: {outcome.message}\n(r render, p place, s save, q quit)"
+            return (f"{outcome.status}: {outcome.message}\n"
+                    "(m manual, n repeat, l slicer, c clear, "
+                    "r render, p place, s save, q quit)") + self._repeat_tail() + self._hypothesis_tail()
         cube = ", ".join(f"{value:.1f}" for value in outcome.cube)
         ras = ", ".join(f"{value:.1f}" for value in outcome.ras)
         residuals = " · ".join(f"({value:.2f})" for value in outcome.residual_px)
+        sigma = float(outcome.sigma_px if outcome.sigma_px is not None
+                      else self.effective_sigma())
+        truth = ("truth unknown (frames were given, not rendered)"
+                 if outcome.error_mm is None
+                 else f"error {outcome.error_mm:.2f} mm against truth (simulated)")
         text = (
             f"cube ({cube}) mm      RAS ({ras}) mm\n"
-            f"error {outcome.error_mm:.2f} mm against truth      "
-            f"predicted {outcome.predicted_mm:.2f} mm at sigma "
-            f"{self.effective_sigma():.2f} px\n"
+            f"{truth}      predicted {outcome.predicted_mm:.2f} mm at sigma {sigma:.2f} px\n"
             f"field inside\n"
-            f"seen c1 c2 c3      residuals {residuals}"
+            f"seen c1 c2 c3 ({outcome.found_by})      residuals {residuals}"
         )
+        text += self._repeat_tail()
+        text += self._hypothesis_tail()
         # A high residual is sometimes real, so the point stays placeable --
         # but on real hardware there is no truth line, and this is the only
         # quality signal the operator has.
@@ -339,6 +533,8 @@ class SandboxWindow:
         self.sandbox = sandbox
         self.figure = figure
         self.panes = {}
+        self.manual = False
+        self.clicked = {}          # camera index -> (u, v), while three are gathered
         self.figure.canvas.mpl_connect("button_press_event", self.on_press)
         self.figure.canvas.mpl_connect("motion_notify_event", self.on_motion)
         self.figure.canvas.mpl_connect("key_press_event", self.on_key)
@@ -358,11 +554,13 @@ class SandboxWindow:
     def render(self):
         """Redraw the three frames and the scene. The expensive step.
 
-        It also clears the standing nomination: the frames have changed, so a
-        point found against the old ones is no longer the answer to this scene.
+        It also clears the standing nomination and any half-finished manual
+        clicks: the frames have changed, so a point found against the old ones
+        is no longer the answer to this scene.
         """
         self.sandbox.render_all()
         self.sandbox.outcome = None
+        self.clicked = {}
         self._paint()
 
     def _paint(self):
@@ -372,7 +570,18 @@ class SandboxWindow:
         though it draws the same four panes: that function builds its own figure,
         and this one needs axes it can attach clicks to. So the drawing lives
         here, and the numbers do not -- they come from the sandbox's own state.
+
+        Each pane draws what the detector saw, what the accepted point predicts,
+        and the line between them. That line is the residual in pixels, and it is
+        drawn on the picture rather than quoted in a table so that a wrong answer
+        is visible without reading a number.
         """
+        outcome = self.sandbox.outcome
+        found = outcome is not None and outcome.status == "found"
+        world = None
+        if found:
+            world = np.asarray(
+                self.sandbox.rig.to_rig(tuple(float(v) for v in outcome.ras)), float)
         for index, frame in enumerate(self.sandbox.frames):
             pane = self.panes[index]
             pane.clear()
@@ -381,12 +590,32 @@ class SandboxWindow:
             pane.set_yticks([])
             markers = cam.marker_corners(self.sandbox.geometry.marker_mm)
             span = float(np.ptp(where_they_land(self.sandbox.cameras[index], markers), axis=0).max())
-            pane.set_title(f"camera {index + 1}   marker spans {span:.0f} px", fontsize=9)
-            if self.sandbox.outcome is not None and self.sandbox.outcome.status == "found":
-                u_px, v_px = self.sandbox.outcome.pixels[index]
-                pane.plot(u_px, v_px, marker="+", color="tab:red", ms=11, mew=1.4)
+            title = f"camera {index + 1}   marker spans {span:.0f} px"
+            if found:
+                seen = np.asarray(outcome.pixels[index], float)
+                predicted = where_it_lands(self.sandbox.cameras[index], world)
+                title += f"   residual {float(outcome.residual_px[index]):.2f} px"
+                pane.plot(seen[0], seen[1], marker="+", color=CAMERA_COLOURS[index],
+                          ms=11, mew=1.4)
+                pane.plot(predicted[0], predicted[1], marker="o", color=CAMERA_COLOURS[index],
+                          ms=9, mew=1.4, mfc="none")
+                pane.plot([seen[0], predicted[0]], [seen[1], predicted[1]],
+                          color=CAMERA_COLOURS[index], lw=1.0, alpha=0.8)
+            if self.sandbox.hypothesis_point is not None:
+                where = where_it_lands(self.sandbox.cameras[index],
+                                       self.sandbox.hypothesis_point)
+                pane.plot(where[0], where[1], marker="D", color=CAMERA_COLOURS[index],
+                          ms=7, mfc="none", mew=1.3)
+            if index in self.clicked:
+                u_px, v_px = self.clicked[index]
+                pane.plot(u_px, v_px, marker="o", color=CAMERA_COLOURS[index], ms=7)
+            pane.set_title(title, fontsize=9, color=CAMERA_COLOURS[index])
         self._paint_scene()
-        self.figure.suptitle(self.sandbox.readout(), fontsize=10, y=0.02, va="bottom")
+        text = self.sandbox.readout()
+        if self.manual and self.clicked:
+            text += (f"\nmanual: {len(self.clicked)} of "
+                     f"{len(self.sandbox.cameras)} cameras clicked")
+        self.figure.suptitle(text, fontsize=10, y=0.02, va="bottom")
         self.figure.canvas.draw_idle()
 
     def _paint_scene(self):
@@ -395,17 +624,24 @@ class SandboxWindow:
         pane.clear()
         markers = cam.marker_corners(self.sandbox.geometry.marker_mm)
         ring = np.vstack([markers, markers[:1]])
-        pane.plot(ring[:, 0], ring[:, 1], ring[:, 2], color="tab:orange", lw=2,
+        pane.plot(ring[:, 0], ring[:, 1], ring[:, 2], color="grey", lw=2, ls="--",
                   label=f"printed square ({self.sandbox.geometry.marker_mm:.0f} mm)")
-        pane.scatter(0, 0, 0, color="tab:green", marker="*", s=200, label="the true point")
+        if self.sandbox.outcome is not None and self.sandbox.outcome.error_mm is not None:
+            pane.scatter(0, 0, 0, color="tab:blue", marker="*", s=200,
+                         label="the true point (simulated)")
         if self.sandbox.outcome is not None and self.sandbox.outcome.status == "found":
-            pane.scatter(*self.sandbox.outcome.ras, color="tab:red", marker="x", s=90,
+            point = self.sandbox.outcome.ras
+            pane.scatter(*point, color="white", marker="x", s=170, lw=3)
+            pane.scatter(*point, color="black", marker="x", s=90, lw=1.6,
                          label="found from three rays")
             self._paint_rays(pane)
-        positions = self.sandbox.camera_positions()
-        for index, position in enumerate(positions):
-            pane.scatter(*position, color="tab:blue", s=40, marker="s")
-            pane.text(*position, f"  c{index + 1}", color="tab:blue", fontsize=8)
+        if self.sandbox.hypothesis_cube is not None:
+            here = np.asarray(self.sandbox.hypothesis_ras, float)
+            pane.scatter(*here, color="tab:purple", marker="D", s=70,
+                         label="a point placed in Slicer")
+        for index, position in enumerate(self.sandbox.camera_positions()):
+            pane.scatter(*position, color=CAMERA_COLOURS[index], s=40, marker="s")
+            pane.text(*position, f"  c{index + 1}", color=CAMERA_COLOURS[index], fontsize=8)
         pane.set_xlabel("R (mm)")
         pane.set_ylabel("A (mm)")
         pane.set_zlabel("S (mm)")
@@ -423,7 +659,7 @@ class SandboxWindow:
         outcome = self.sandbox.outcome
         rig_point = np.asarray(
             self.sandbox.rig.to_rig(tuple(float(v) for v in outcome.ras)), float)
-        for camera, pixel in zip(self.sandbox.cameras, outcome.pixels):
+        for index, (camera, pixel) in enumerate(zip(self.sandbox.cameras, outcome.pixels)):
             origin, direction = ray_for(
                 np.asarray(camera.projection, float).tolist(),
                 (float(pixel[0]), float(pixel[1])))
@@ -433,11 +669,20 @@ class SandboxWindow:
                 reach = float(self.sandbox.geometry.standoff)
             tip = origin + np.asarray(direction, float) * reach * 1.1
             pane.plot([origin[0], tip[0]], [origin[1], tip[1]], [origin[2], tip[2]],
-                      color="tab:blue", lw=1.0, alpha=0.55)
+                      color=CAMERA_COLOURS[index], lw=1.0, alpha=0.55)
 
     def on_press(self, event):
         pane = self._camera_at(event)
         if pane is None:
+            return
+        if self.manual:
+            self.clicked[pane] = (event.xdata, event.ydata)
+            if len(self.clicked) == len(self.sandbox.cameras):
+                pixels = [self.clicked[index]
+                          for index in range(len(self.sandbox.cameras))]
+                self.clicked = {}
+                self.sandbox.nominate_manually(pixels)
+            self._paint()
             return
         self.sandbox.nominate(pane, event.xdata, event.ydata)
         self._paint()
@@ -451,6 +696,20 @@ class SandboxWindow:
             self.render()
         elif event.key == "p":
             self.place()
+        elif event.key == "n":
+            self.sandbox.repeat()
+            self._paint()
+        elif event.key == "l":
+            self.sandbox.load_hypothesis()
+            self._paint()
+        elif event.key == "c":
+            self.sandbox.clear_hypothesis()
+            self.clicked = {}
+            self._paint()
+        elif event.key == "m":
+            self.manual = not self.manual
+            self.clicked = {}
+            self._paint()
         elif event.key == "s":
             self.save("camera-sandbox.png")
 
