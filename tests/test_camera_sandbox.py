@@ -662,3 +662,134 @@ def test_handed_frames_never_draw_the_simulated_true_point():
     labels = [artist.get_label()
               for artist in window.panes["scene"].collections]
     assert "the true point (simulated)" not in labels
+
+
+def write_probe_file(folder, *, cube):
+    """The file Slicer publishes while a person moves the probe."""
+    import json
+
+    from targeting.probe import PROBE_FILE
+    path = folder / PROBE_FILE
+    path.write_text(json.dumps({"cube": list(cube), "ras": list(cube)}), encoding="utf-8")
+    return path
+
+
+def test_a_published_probe_becomes_the_hypothesis(tmp_path):
+    write_probe_file(tmp_path, cube=(41.0, 42.0, 43.0))
+    box = a_sandbox()
+
+    note = box.follow_probe(tmp_path)
+
+    assert box.hypothesis_cube == pytest.approx((41.0, 42.0, 43.0))
+    assert "live probe" in note
+    assert "not a measurement" in box.readout()
+
+
+def test_moving_the_probe_moves_the_hypothesis(tmp_path):
+    box = a_sandbox()
+    write_probe_file(tmp_path, cube=(41.0, 42.0, 43.0))
+    box.follow_probe(tmp_path)
+
+    write_probe_file(tmp_path, cube=(45.0, 50.0, 55.0))
+    box.follow_probe(tmp_path)
+
+    assert box.hypothesis_cube == pytest.approx((45.0, 50.0, 55.0))
+
+
+def test_a_probe_file_that_goes_away_leaves_the_last_point(tmp_path):
+    """Closing Slicer must not erase the reference the operator was comparing against."""
+    box = a_sandbox()
+    write_probe_file(tmp_path, cube=(41.0, 42.0, 43.0))
+    box.follow_probe(tmp_path)
+    (tmp_path / "slicer-probe.json").unlink()
+
+    note = box.follow_probe(tmp_path)
+
+    assert box.hypothesis_cube == pytest.approx((41.0, 42.0, 43.0))
+    assert "no probe" in note
+
+
+def test_the_window_follows_the_probe_and_repaints_only_when_it_moves(tmp_path):
+    window = a_window()
+    write_probe_file(tmp_path, cube=(41.0, 42.0, 43.0))
+
+    window.follow(tmp_path)
+
+    assert window.following is True
+    assert window.sandbox.hypothesis_cube == pytest.approx((41.0, 42.0, 43.0))
+    assert window.panes[0].lines, "the diamond should be drawn"
+    before = window.panes[0].lines[0]
+    window._follow_tick()
+    assert window.panes[0].lines[0] is before, "an unmoved point must not repaint"
+
+    window.on_key(KeyEvent("key_press_event", window.figure.canvas, "L"))
+
+    assert window.following is False
+
+
+def test_writing_frames_puts_three_pictures_and_a_manifest_on_disk(tmp_path):
+    import json
+
+    code = camera_sandbox.main(["--write-frames", str(tmp_path), "--frames", "2", "--trials", "4"])
+
+    assert code == 0
+    files = sorted(path.name for path in tmp_path.glob("camera-*.png"))
+    assert files == ["camera-1.png", "camera-2.png", "camera-3.png"]
+    manifest = json.loads((tmp_path / "camera-frames.json").read_text())
+    assert [camera["name"] for camera in manifest["cameras"]] == ["c1", "c2", "c3"]
+    assert all(camera["width"] == 320 and camera["height"] == 320
+               for camera in manifest["cameras"])
+    import cv2
+    image = cv2.imread(str(tmp_path / "camera-2.png"), cv2.IMREAD_GRAYSCALE)
+    assert image.shape == (320, 320) and image.dtype.name == "uint8"
+
+
+def write_clicks_file(folder, pixels):
+    import json
+
+    from targeting.clicks import CLICKS_FILE
+    (folder / CLICKS_FILE).write_text(json.dumps({"pixels": [list(p) for p in pixels]}),
+                                      encoding="utf-8")
+
+
+def test_published_clicks_are_solved_as_a_manual_measurement(tmp_path):
+    box = a_sandbox()
+    box.render_all()
+    pixels = [camera_sandbox.where_it_lands(camera, np.array([[0.0, 0.0, 0.0]]))
+              for camera in box.cameras]
+    write_clicks_file(tmp_path, pixels)
+
+    applied, note = box.follow_clicks(tmp_path)
+
+    assert applied is True
+    assert box.outcome is not None and box.outcome.status == "found"
+    assert box.outcome.found_by == "manual"
+    assert box.outcome.cube == pytest.approx((50.0, 50.0, 50.0), abs=5.0)
+    assert "clicks" in note
+
+
+def test_the_same_clicks_are_not_solved_twice(tmp_path):
+    box = a_sandbox()
+    box.render_all()
+    pixels = [camera_sandbox.where_it_lands(camera, np.array([[0.0, 0.0, 0.0]]))
+              for camera in box.cameras]
+    write_clicks_file(tmp_path, pixels)
+    box.follow_clicks(tmp_path)
+    first = box.outcome
+
+    applied, _ = box.follow_clicks(tmp_path)
+
+    assert applied is False and box.outcome is first
+
+
+def test_no_clicks_file_leaves_the_outcome_alone(tmp_path):
+    box = a_sandbox()
+    box.render_all()
+    target = camera_sandbox.where_it_lands(box.cameras[0], (0.0, 0.0, 0.0))
+    box.nominate(0, target[0], target[1])
+    before = box.outcome
+
+    applied, note = box.follow_clicks(tmp_path)
+
+    assert applied is False and box.outcome is before
+    assert "no clicks" in note

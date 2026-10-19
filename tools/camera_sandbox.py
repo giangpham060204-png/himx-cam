@@ -17,10 +17,13 @@ geometry and the two verbs, nominate() and place().
 """
 
 import argparse
+import cv2
+import json
 import math
 import pathlib
 import sys
 from dataclasses import dataclass
+from datetime import datetime
 
 
 def _resolve_project_root(_globals=None, _env=None):
@@ -66,6 +69,8 @@ from targeting.rig import load_rig  # noqa: E402
 from targeting.triangulation import (camera_pose, project as project_point,  # noqa: E402
                                     projection_matrix, ray_for, triangulate)
 from targeting.camera_log import append_camera_target  # noqa: E402
+from targeting.probe import PROBE_FILE, read_probe  # noqa: E402
+from targeting.clicks import CLICKS_FILE, read_clicks  # noqa: E402
 from targeting.logbook import newest_target  # noqa: E402
 
 import frame_sources  # noqa: E402
@@ -82,6 +87,7 @@ CLICK_SIGMA_PX = 5.0
 
 
 LOGS_DIR = PROJECT_ROOT / "logs"
+CAMERA_FRAMES_DIR = LOGS_DIR / "camera-frames"
 
 # Colour says which camera; shape says what the thing is. The three colours are
 # also the three marks a reader can name out loud, so nothing else may use them.
@@ -148,6 +154,7 @@ class Sandbox:
         self.hypothesis_cube = None
         self.hypothesis_ras = None
         self.hypothesis_note = ""
+        self.applied_clicks = None
         self.rebuild()
 
     # -- geometry ------------------------------------------------------
@@ -172,6 +179,7 @@ class Sandbox:
         self.frames = []
         self.outcome = None
         self.repeat_result = None
+        self.applied_clicks = None
 
     def camera_positions(self):
         """Where the three cameras stand, for the current geometry."""
@@ -381,6 +389,47 @@ class Sandbox:
         self.hypothesis_ras = None
         self.hypothesis_note = ""
 
+    def follow_clicks(self, logs_dir=None):
+        """Solve the click set Slicer published, once per new set.
+
+        A click set is a direct measurement of the pictures, so it wins over
+        the probe: the window tries this first. An unchanged set solves
+        nothing twice; a missing or malformed file is reported, never solved.
+        Returns (applied, note).
+        """
+        folder = LOGS_DIR if logs_dir is None else pathlib.Path(logs_dir)
+        clicks, note = read_clicks(folder / CLICKS_FILE)
+        if clicks is None:
+            return False, note
+        pixels = tuple(tuple(float(value) for value in pair) for pair in clicks.pixels)
+        if self.applied_clicks is not None and tuple(self.applied_clicks) == pixels:
+            return False, f"{CLICKS_FILE}: clicks unchanged ({note})"
+        self.applied_clicks = pixels
+        self.nominate_manually(pixels)
+        return True, f"{CLICKS_FILE}: clicks solved ({note})"
+
+    def follow_probe(self, logs_dir=None):
+        """Take the point Slicer is publishing right now, if it has one.
+
+        The same hypothesis the `l` key loads from the click log, only live: the
+        operator moves a probe in Slicer and the lines of sight move with it. It
+        is still a human's point and never a measurement -- nothing on this path
+        touches the camera log.
+
+        A probe file that has gone away leaves the last point standing: closing
+        Slicer should not erase the reference the operator was comparing
+        against. The note says what happened either way.
+        """
+        folder = LOGS_DIR if logs_dir is None else pathlib.Path(logs_dir)
+        probe, note = read_probe(folder / PROBE_FILE)
+        self.hypothesis_note = note
+        if probe is None:
+            return note
+        self.hypothesis_cube = tuple(float(value) for value in probe.cube)
+        self.hypothesis_ras = tuple(float(value) for value in probe.ras)
+        self.hypothesis_note = f"live probe from Slicer ({note})"
+        return self.hypothesis_note
+
     @property
     def hypothesis_point(self):
         """The hypothesis in the rig frame, where the projections live."""
@@ -529,12 +578,15 @@ class SandboxWindow:
     this class can be replaced, or driven by a test, without changing an answer.
     """
 
-    def __init__(self, sandbox, figure):
+    def __init__(self, sandbox, figure, logs_dir=None):
         self.sandbox = sandbox
         self.figure = figure
+        self.logs_dir = logs_dir
         self.panes = {}
         self.manual = False
         self.clicked = {}          # camera index -> (u, v), while three are gathered
+        self.following = False
+        self.timer = None
         self.figure.canvas.mpl_connect("button_press_event", self.on_press)
         self.figure.canvas.mpl_connect("motion_notify_event", self.on_motion)
         self.figure.canvas.mpl_connect("key_press_event", self.on_key)
@@ -671,6 +723,37 @@ class SandboxWindow:
             pane.plot([origin[0], tip[0]], [origin[1], tip[1]], [origin[2], tip[2]],
                       color=CAMERA_COLOURS[index], lw=1.0, alpha=0.55)
 
+    def follow(self, logs_dir=None):
+        """Start or stop following the probe Slicer publishes.
+
+        The timer, not the key press, is what makes this live: every half second
+        the published point is read, and a point that moved is redrawn. A point
+        that did not move costs one file read and no repaint.
+        """
+        if self.following:
+            self.following = False
+            if self.timer is not None:
+                self.timer.stop()
+            self._paint()
+            return
+        self.following = True
+        if self.logs_dir is None and logs_dir is not None:
+            self.logs_dir = logs_dir
+        if self.timer is None:
+            self.timer = self.figure.canvas.new_timer(interval=500)
+            self.timer.add_callback(self._follow_tick)
+        self.timer.start()
+        self._follow_tick()
+
+    def _follow_tick(self):
+        """Clicks first, the probe only when there is no click set."""
+        before = (self.sandbox.hypothesis_cube, self.sandbox.outcome)
+        applied, _note = self.sandbox.follow_clicks(self.logs_dir)
+        if not applied:
+            self.sandbox.follow_probe(self.logs_dir)
+        if (self.sandbox.hypothesis_cube, self.sandbox.outcome) != before:
+            self._paint()
+
     def on_press(self, event):
         pane = self._camera_at(event)
         if pane is None:
@@ -702,6 +785,8 @@ class SandboxWindow:
         elif event.key == "l":
             self.sandbox.load_hypothesis()
             self._paint()
+        elif event.key == "L":
+            self.follow()
         elif event.key == "c":
             self.sandbox.clear_hypothesis()
             self.clicked = {}
@@ -745,6 +830,8 @@ def main(argv=None):
     parser.add_argument("--optics", default=DEFAULT_MODULE, choices=sorted(MODULES))
     parser.add_argument("--out", default=None,
                         help="write figures here and exit, without a window")
+    parser.add_argument("--write-frames", default=None,
+                        help="write one frame per camera here, with a manifest, and exit")
     parser.add_argument("--spread", type=float, default=150.0)
     parser.add_argument("--standoff", type=float, default=500.0)
     parser.add_argument("--aim", type=float, default=35.0)
@@ -753,6 +840,8 @@ def main(argv=None):
                         help="rendered frames per measurement in the report")
     parser.add_argument("--trials", type=int, default=300,
                         help="draws per cell of the accuracy table")
+    parser.add_argument("--follow", action="store_true",
+                        help="start by following the probe Slicer publishes")
     args = parser.parse_args(argv)
 
     from targeting.frame import Frame
@@ -762,6 +851,23 @@ def main(argv=None):
     box = Sandbox(optics=optics, geometry=geometry,
                   rig=load_rig(PROJECT_ROOT / "rig.json"),
                   frame=Frame.load(PROJECT_ROOT / "frame.json"))
+
+    if args.write_frames:
+        out = pathlib.Path(args.write_frames)
+        out.mkdir(parents=True, exist_ok=True)
+        cameras = []
+        for index, frame in enumerate(box.render_all(), start=1):
+            name = f"camera-{index}.png"
+            cv2.imwrite(str(out / name), frame)
+            cameras.append({"name": f"c{index}", "file": name,
+                            "width": int(frame.shape[1]), "height": int(frame.shape[0])})
+        manifest = {"optics": args.optics,
+                    "when": datetime.now().isoformat(timespec="seconds"),
+                    "cameras": cameras}
+        (out / "camera-frames.json").write_text(json.dumps(manifest, indent=2),
+                                                encoding="utf-8")
+        print(f"wrote {len(cameras)} frames and camera-frames.json to {out}")
+        return 0
 
     if args.out:
         import matplotlib
@@ -789,6 +895,8 @@ def main(argv=None):
     window = SandboxWindow(box, figure)
     window.draw()
     window.render()
+    if args.follow:
+        window.follow()
     plt.show()
     return 0
 
