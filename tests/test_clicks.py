@@ -86,3 +86,39 @@ def test_a_singular_view_is_refused_not_guessed():
 
     with pytest.raises(ValueError, match="no mapping"):
         pixel_from_view(singular, IDENTITY, 1.0, 2.0)
+
+
+def test_a_full_set_is_complete(tmp_path):
+    clicks, _ = read_clicks(write_clicks(tmp_path))
+
+    assert clicks.is_complete() is True
+
+
+def test_an_empty_set_is_a_valid_clear_signal(tmp_path):
+    clicks, note = read_clicks(write_clicks(tmp_path, pixels=[None, None, None]))
+
+    assert clicks == Clicks(pixels=(None, None, None), when="2026-10-19T10:00:00")
+    assert clicks.is_complete() is False
+    assert "empty" in note
+
+
+def test_a_partial_set_keeps_nulls_for_unclicked_views(tmp_path):
+    clicks, _ = read_clicks(
+        write_clicks(tmp_path, pixels=[PIXELS[0], None, PIXELS[2]]))
+
+    assert clicks.pixels == (tuple(PIXELS[0]), None, tuple(PIXELS[2]))
+    assert clicks.is_complete() is False
+
+
+def test_a_non_pair_non_null_entry_names_null(tmp_path):
+    clicks, note = read_clicks(
+        write_clicks(tmp_path, pixels=[PIXELS[0], 7, PIXELS[2]]))
+
+    assert clicks is None and "null" in note
+
+
+def test_text_in_a_partial_pair_is_still_refused(tmp_path):
+    clicks, note = read_clicks(
+        write_clicks(tmp_path, pixels=[["a", "b"], None, None]))
+
+    assert clicks is None and "numbers" in note

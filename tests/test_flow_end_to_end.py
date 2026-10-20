@@ -119,3 +119,34 @@ def test_the_pictures_slicer_shows_solve_to_the_marker_they_draw(tmp_path):
 
     assert applied is True
     assert box.outcome.cube == pytest.approx((50.0, 50.0, 50.0), abs=2.0)
+
+
+def test_live_clicks_solve_only_once_the_set_is_whole(tmp_path):
+    """Each camera click syncs on its own; the point lands with the third."""
+    box = build(seed=4)
+    box.render_all()
+    pixels = [camera_sandbox.where_it_lands(camera, np.array([[0.0, 0.0, 0.0]]))
+              for camera in box.cameras]
+    live = [[float(value) for value in pixel] for pixel in pixels]
+
+    (tmp_path / CLICKS_FILE).write_text(
+        json.dumps({"pixels": [live[0], None, None]}), encoding="utf-8")
+    applied, note = box.follow_clicks(tmp_path)
+    assert applied is True
+    assert box.outcome is None
+    assert "waiting" in note
+
+    (tmp_path / CLICKS_FILE).write_text(
+        json.dumps({"pixels": [live[0], live[1], None]}), encoding="utf-8")
+    applied, _ = box.follow_clicks(tmp_path)
+    assert applied is True
+    assert box.outcome is None
+
+    (tmp_path / CLICKS_FILE).write_text(
+        json.dumps({"pixels": live}), encoding="utf-8")
+    applied, _ = box.follow_clicks(tmp_path)
+
+    assert applied is True
+    assert box.outcome.status == "found"
+    assert box.outcome.found_by == "manual"
+    assert box.outcome.cube == pytest.approx((50.0, 50.0, 50.0), abs=2.0)

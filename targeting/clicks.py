@@ -22,17 +22,22 @@ CLICKS_FILE = "camera-clicks.json"
 
 @dataclass(frozen=True)
 class Clicks:
-    """One click in each camera view, in camera order."""
+    """One entry per camera view, in camera order; None is a view not clicked yet."""
 
     pixels: tuple
     when: str = ""
+
+    def is_complete(self) -> bool:
+        """True once every view has been clicked; a point needs all three."""
+        return all(pixel is not None for pixel in self.pixels)
 
 
 def read_clicks(path) -> tuple:
     """``(Clicks | None, note)`` from one published file.
 
-    A click set is all three or nothing: a point solved from two views is not the
-    measurement the operator thinks they made.
+    A pixel is null until its view is clicked, so a file may hold a partial set;
+    only a complete set can solve a point, which is what ``is_complete`` is for.
+    The all-null file is the explicit empty set: the clear signal, not an error.
     """
     path = Path(path)
     try:
@@ -48,13 +53,23 @@ def read_clicks(path) -> tuple:
     raw = payload["pixels"]
     if not isinstance(raw, list) or len(raw) != 3:
         return None, f"{path.name}: expected three pixels, one per camera"
-    try:
-        pixels = tuple(tuple(float(value) for value in pair) for pair in raw)
-    except (TypeError, ValueError):
-        return None, f"{path.name}: pixels must be numbers"
-    if any(len(pair) != 2 for pair in pixels):
-        return None, f"{path.name}: pixels must be (u, v) pairs"
-    return Clicks(pixels=pixels, when=str(payload.get("when", ""))), \
+    parsed = []
+    for entry in raw:
+        if entry is None:
+            parsed.append(None)
+        elif isinstance(entry, (list, tuple)) and len(entry) == 2:
+            try:
+                parsed.append((float(entry[0]), float(entry[1])))
+            except (TypeError, ValueError):
+                return None, f"{path.name}: pixels must be numbers"
+        else:
+            return None, f"{path.name}: a pixel is null until its view is clicked"
+    pixels = tuple(parsed)
+    when = str(payload.get("when", ""))
+    if all(pixel is None for pixel in pixels):
+        return Clicks(pixels=pixels, when=when), \
+            f"{path.name}: empty clicks (no view clicked yet)"
+    return Clicks(pixels=pixels, when=when), \
         f"{path.name}: clicks read"
 
 
