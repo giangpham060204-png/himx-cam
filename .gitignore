@@ -11,5 +11,8 @@ logs/
 data/
 
 # Project documentation and superpowers workspaces (kept local by request)
-docs/superpowers/
+docs/
 .superpowers/
+
+# Generated figures (kept local; not part of the code history)
+images/

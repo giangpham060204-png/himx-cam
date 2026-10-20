@@ -748,8 +748,24 @@ def write_clicks_file(folder, pixels):
     import json
 
     from targeting.clicks import CLICKS_FILE
-    (folder / CLICKS_FILE).write_text(json.dumps({"pixels": [list(p) for p in pixels]}),
+    (folder / CLICKS_FILE).write_text(
+        json.dumps({"pixels": [list(p) if p is not None else None for p in pixels]}),
+        encoding="utf-8")
+
+
+def write_empty_clicks_file(folder):
+    """The clear signal: a valid clicks file with every view unclicked."""
+    import json
+
+    from targeting.clicks import CLICKS_FILE
+    (folder / CLICKS_FILE).write_text(json.dumps({"pixels": [None, None, None]}),
                                       encoding="utf-8")
+
+
+def live_pixels(box):
+    """One projected pixel per camera, through the solver's own projector."""
+    return [camera_sandbox.where_it_lands(camera, np.array([[0.0, 0.0, 0.0]]))
+            for camera in box.cameras]
 
 
 def test_published_clicks_are_solved_as_a_manual_measurement(tmp_path):
@@ -793,3 +809,274 @@ def test_no_clicks_file_leaves_the_outcome_alone(tmp_path):
 
     assert applied is False and box.outcome is before
     assert "no clicks" in note
+
+
+def test_a_partial_click_set_is_stored_not_solved(tmp_path):
+    """One click is a mark and a ray, not a point: the outcome stays untouched."""
+    box = a_sandbox()
+    box.render_all()
+    pixels = live_pixels(box)
+    first = tuple(float(value) for value in pixels[0])
+    write_clicks_file(tmp_path, [pixels[0], None, None])
+
+    applied, note = box.follow_clicks(tmp_path)
+
+    assert applied is True
+    assert box.outcome is None
+    assert box.click_pixels[0] == pytest.approx(first)
+    assert box.click_pixels[1] is None and box.click_pixels[2] is None
+    assert set(box.click_rays) == {0}
+    assert "clicked 1 of 3" in note and "waiting" in note
+
+
+def test_a_partial_click_stores_the_ray_that_pixel_saw(tmp_path):
+    """The stored ray is the triangulation seam's ray, not a second arithmetic."""
+    from targeting.triangulation import ray_for
+    box = a_sandbox()
+    box.render_all()
+    pixels = live_pixels(box)
+    write_clicks_file(tmp_path, [None, pixels[1], None])
+
+    box.follow_clicks(tmp_path)
+
+    origin, direction = ray_for(
+        np.asarray(box.cameras[1].projection, float).tolist(),
+        (float(pixels[1][0]), float(pixels[1][1])))
+    assert box.click_rays[1][0] == pytest.approx(origin)
+    assert box.click_rays[1][1] == pytest.approx(direction)
+
+
+def test_the_third_click_solves_and_keeps_the_marks(tmp_path):
+    box = a_sandbox()
+    box.render_all()
+    pixels = live_pixels(box)
+    write_clicks_file(tmp_path, [pixels[0], pixels[1], None])
+    box.follow_clicks(tmp_path)
+    write_clicks_file(tmp_path, pixels)
+
+    applied, note = box.follow_clicks(tmp_path)
+
+    assert applied is True
+    assert box.outcome is not None and box.outcome.status == "found"
+    assert box.outcome.found_by == "manual"
+    assert all(pair is not None for pair in box.click_pixels)
+    assert set(box.click_rays) == {0, 1, 2}
+    assert "clicks" in note
+
+
+def test_an_unchanged_partial_set_solves_nothing_twice(tmp_path):
+    box = a_sandbox()
+    box.render_all()
+    pixels = live_pixels(box)
+    write_clicks_file(tmp_path, [pixels[0], None, None])
+    box.follow_clicks(tmp_path)
+
+    applied, _ = box.follow_clicks(tmp_path)
+
+    assert applied is False
+
+
+def test_a_reclick_in_one_camera_reapplies(tmp_path):
+    """The guard keys off the full set, so moving one click is a new set."""
+    box = a_sandbox()
+    box.render_all()
+    pixels = live_pixels(box)
+    write_clicks_file(tmp_path, [pixels[0], None, None])
+    box.follow_clicks(tmp_path)
+    moved = (float(pixels[0][0]) + 3.0, float(pixels[0][1]) - 2.0)
+    write_clicks_file(tmp_path, [moved, None, None])
+
+    applied, note = box.follow_clicks(tmp_path)
+
+    assert applied is True
+    assert box.click_pixels[0] == pytest.approx(moved)
+    assert "clicked 1 of 3" in note
+
+
+def test_an_empty_set_clears_what_follow_wrote(tmp_path):
+    box = a_sandbox()
+    box.render_all()
+    write_clicks_file(tmp_path, live_pixels(box))
+    box.follow_clicks(tmp_path)
+    assert box.outcome is not None
+    write_empty_clicks_file(tmp_path)
+
+    applied, note = box.follow_clicks(tmp_path)
+
+    assert applied is True
+    assert "clear" in note
+    assert box.click_pixels == (None, None, None)
+    assert box.click_rays == {}
+    assert box.outcome is None
+
+
+def test_an_empty_set_on_a_clean_sandbox_changes_nothing(tmp_path):
+    box = a_sandbox()
+    box.render_all()
+    write_empty_clicks_file(tmp_path)
+
+    applied, note = box.follow_clicks(tmp_path)
+
+    assert applied is False
+    assert "clear" in note
+
+
+def test_an_empty_set_leaves_a_detector_point_alone(tmp_path):
+    """Clearing the camera clicks must not erase a measurement from the detector."""
+    box = a_sandbox()
+    box.render_all()
+    target = camera_sandbox.where_it_lands(box.cameras[0], (0.0, 0.0, 0.0))
+    box.nominate(0, target[0], target[1])
+    before = box.outcome
+    assert before.found_by == "detected"
+    write_empty_clicks_file(tmp_path)
+
+    applied, _ = box.follow_clicks(tmp_path)
+
+    assert box.outcome is before
+
+
+def test_an_empty_set_leaves_a_hand_placed_manual_point_alone(tmp_path):
+    """Nor may it erase an `m`-mode point: follow only owns what follow solved."""
+    box = a_sandbox()
+    box.render_all()
+    pixels = live_pixels(box)
+    box.nominate_manually([tuple(float(v) for v in pixel) for pixel in pixels])
+    before = box.outcome
+    write_empty_clicks_file(tmp_path)
+
+    applied, _ = box.follow_clicks(tmp_path)
+
+    assert box.outcome is before
+
+
+def test_a_partial_click_set_is_drawn_in_its_camera_colour(tmp_path):
+    window = a_window()
+    window.logs_dir = tmp_path
+    write_clicks_file(tmp_path, [live_pixels(window.sandbox)[0], None, None])
+
+    window._follow_tick()
+
+    assert window.panes[0].lines, "the clicked camera draws its mark"
+    assert list(window.panes[1].lines) == []
+    assert list(window.panes[2].lines) == []
+    drawn = {line.get_color() for line in window.panes["scene"].lines}
+    assert "tab:red" in drawn
+    assert "tab:green" not in drawn and "tab:orange" not in drawn
+
+
+def test_a_fresh_window_paints_bare_frames():
+    """Clean by default: no detector marks, no connectors, no diamond, no rays."""
+    window = a_window()
+
+    assert window.sandbox.outcome is None
+    for index in range(3):
+        assert list(window.panes[index].lines) == []
+    drawn = {line.get_color() for line in window.panes["scene"].lines}
+    assert not (drawn & set(camera_sandbox.CAMERA_COLOURS))
+
+
+def test_detect_at_startup_solves_with_the_detector_and_shows_its_marks():
+    window = a_window()
+
+    window.detect()
+
+    assert window.sandbox.outcome.status == "found"
+    assert window.panes[0].lines, "the detector's marks are drawn"
+    drawn = {line.get_color() for line in window.panes["scene"].lines}
+    assert drawn & set(camera_sandbox.CAMERA_COLOURS)
+
+
+def test_the_follow_tick_ignores_a_probe_older_than_the_session(tmp_path):
+    """No resurrecting the previous session's diamond when following by default."""
+    import os
+
+    window = a_window()
+    window.logs_dir = tmp_path
+    path = write_probe_file(tmp_path, cube=(41.0, 42.0, 43.0))
+    old = window.sandbox.session_start - 120.0
+    os.utime(path, (old, old))
+
+    window._follow_tick()
+
+    assert window.sandbox.hypothesis_cube is None
+    assert "stale" in window.sandbox.hypothesis_note
+
+
+def test_the_follow_tick_still_follows_a_fresh_probe(tmp_path):
+    window = a_window()
+    window.logs_dir = tmp_path
+    write_probe_file(tmp_path, cube=(41.0, 42.0, 43.0))
+
+    window._follow_tick()
+
+    assert window.sandbox.hypothesis_cube == pytest.approx((41.0, 42.0, 43.0))
+
+
+def test_a_partial_set_retires_a_clicks_owned_point(tmp_path):
+    """A fresh partial supersedes the solved set: the old point must go."""
+    box = a_sandbox()
+    box.render_all()
+    pixels = live_pixels(box)
+    write_clicks_file(tmp_path, pixels)
+    box.follow_clicks(tmp_path)
+    assert box.outcome is not None and box.clicks_own_outcome is True
+    write_clicks_file(tmp_path, [pixels[0], None, None])
+
+    applied, note = box.follow_clicks(tmp_path)
+
+    assert applied is True
+    assert box.outcome is None
+    assert box.clicks_own_outcome is False
+    assert "waiting" in note
+
+
+def test_a_partial_set_leaves_a_foreign_point_standing(tmp_path):
+    """An m-mode point is not follow's to retire: the marks land, the point stays."""
+    box = a_sandbox()
+    box.render_all()
+    pixels = live_pixels(box)
+    box.nominate_manually([tuple(float(v) for v in pixel) for pixel in pixels])
+    before = box.outcome
+    assert box.clicks_own_outcome is False
+    write_clicks_file(tmp_path, [pixels[0], None, None])
+
+    applied, note = box.follow_clicks(tmp_path)
+
+    assert applied is True
+    assert box.outcome is before
+    assert "waiting" in note
+    assert set(box.click_rays) == {0}
+
+
+def test_the_follow_tick_ignores_clicks_older_than_the_session(tmp_path):
+    """Yesterday's clicks file must not solve a point at startup."""
+    import os
+
+    from targeting.clicks import CLICKS_FILE
+    window = a_window()
+    window.logs_dir = tmp_path
+    write_clicks_file(tmp_path, live_pixels(window.sandbox))
+    path = tmp_path / CLICKS_FILE
+    old = window.sandbox.session_start - 120.0
+    os.utime(path, (old, old))
+
+    applied, note = window._follow_fresh_clicks()
+    window._follow_tick()
+
+    assert applied is False
+    assert "stale" in note
+    assert window.sandbox.outcome is None
+    assert window.sandbox.click_pixels == (None, None, None)
+
+
+def test_the_follow_tick_still_follows_fresh_clicks(tmp_path):
+    window = a_window()
+    window.logs_dir = tmp_path
+    pixels = live_pixels(window.sandbox)
+    write_clicks_file(tmp_path, [pixels[0], None, None])
+
+    window._follow_tick()
+
+    assert window.sandbox.click_pixels[0] is not None
+    assert set(window.sandbox.click_rays) == {0}

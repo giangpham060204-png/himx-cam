@@ -20,8 +20,10 @@ import argparse
 import cv2
 import json
 import math
+import os
 import pathlib
 import sys
+import time
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -155,6 +157,10 @@ class Sandbox:
         self.hypothesis_ras = None
         self.hypothesis_note = ""
         self.applied_clicks = None
+        self.click_pixels = (None, None, None)
+        self.click_rays = {}
+        self.clicks_own_outcome = False
+        self.session_start = time.time()
         self.rebuild()
 
     # -- geometry ------------------------------------------------------
@@ -180,6 +186,9 @@ class Sandbox:
         self.outcome = None
         self.repeat_result = None
         self.applied_clicks = None
+        self.click_pixels = (None, None, None)
+        self.click_rays = {}
+        self.clicks_own_outcome = False
 
     def camera_positions(self):
         """Where the three cameras stand, for the current geometry."""
@@ -228,7 +237,7 @@ class Sandbox:
         """
         if not self.frames:
             self.render_all()
-
+        self.clicks_own_outcome = False
         here = self._detect(camera_index)
         if here is None:
             return self._remember(Outcome(
@@ -243,19 +252,24 @@ class Sandbox:
         self.repeat_result = None
         return self._remember(self._measure())
 
-    def nominate_manually(self, pixels):
+    def nominate_manually(self, pixels, *, via_clicks=False):
         """Solve for a point from three hand-placed pixels, one per camera.
 
         No detector is involved: whatever the operator clicked *is* the
         measurement. That is why the predicted error quotes the click sigma
         rather than the detector's -- three hand-placed lines of sight do not
         meet, and the residual says by how much.
+
+        `via_clicks` marks a solve that came from the published clicks file,
+        so a later empty set knows the standing outcome is its own to clear.
+        A hand solve from `m` mode leaves other outcomes alone.
         """
         pixels = tuple(tuple(float(value) for value in pixel) for pixel in pixels)
         if len(pixels) != len(self.cameras):
             raise ValueError(
                 f"a manual nomination needs one pixel from each of the "
                 f"{len(self.cameras)} cameras, got {len(pixels)}")
+        self.clicks_own_outcome = via_clicks
         try:
             point = triangulate([camera.projection.tolist() for camera in self.cameras],
                                 pixels)
@@ -352,6 +366,7 @@ class Sandbox:
             else:
                 failed += 1
         self.outcome = None          # found against frames that no longer exist
+        self.clicks_own_outcome = False
         if cubes:
             stacked = np.asarray(cubes, float)
             mean = stacked.mean(axis=0)
@@ -390,23 +405,63 @@ class Sandbox:
         self.hypothesis_note = ""
 
     def follow_clicks(self, logs_dir=None):
-        """Solve the click set Slicer published, once per new set.
+        """Sync the click set Slicer published, once per new set.
 
         A click set is a direct measurement of the pictures, so it wins over
-        the probe: the window tries this first. An unchanged set solves
-        nothing twice; a missing or malformed file is reported, never solved.
-        Returns (applied, note).
+        the probe: the window tries this first. Each camera click syncs live:
+        a partial set stores that camera's pixel and its line of sight (drawn
+        in the camera's colour, but no point is solved); the whole set solves
+        through `nominate_manually`; the empty set clears what follow wrote.
+        An unchanged set solves nothing twice; a missing or malformed file is
+        reported, never solved. Returns (applied, note).
         """
         folder = LOGS_DIR if logs_dir is None else pathlib.Path(logs_dir)
         clicks, note = read_clicks(folder / CLICKS_FILE)
         if clicks is None:
             return False, note
-        pixels = tuple(tuple(float(value) for value in pair) for pair in clicks.pixels)
+        pixels = tuple((tuple(float(value) for value in pair)
+                        if pair is not None else None)
+                       for pair in clicks.pixels)
         if self.applied_clicks is not None and tuple(self.applied_clicks) == pixels:
             return False, f"{CLICKS_FILE}: clicks unchanged ({note})"
         self.applied_clicks = pixels
-        self.nominate_manually(pixels)
+        if all(pair is None for pair in pixels):
+            cleared = self._clear_clicks()
+            return cleared, f"{CLICKS_FILE}: clicks cleared ({note})"
+        self.click_pixels = pixels
+        self.click_rays = {
+            index: ray_for(np.asarray(camera.projection, float).tolist(),
+                           (float(pair[0]), float(pair[1])))
+            for index, (camera, pair) in enumerate(zip(self.cameras, pixels))
+            if pair is not None
+        }
+        if not clicks.is_complete():
+            if self.clicks_own_outcome:
+                self.outcome = None
+                self.clicks_own_outcome = False
+            count = sum(pair is not None for pair in pixels)
+            return True, (f"{CLICKS_FILE}: clicked {count} of 3 "
+                          f"\u2014 waiting for the rest")
+        self.nominate_manually([pair for pair in pixels], via_clicks=True)
         return True, f"{CLICKS_FILE}: clicks solved ({note})"
+
+    def _clear_clicks(self):
+        """Forget the live-click marks and rays, and the outcome if follow wrote it.
+
+        Outcomes from the detector path or `m` manual mode belong to their own
+        operator action and are left standing. Returns True when anything
+        actually changed.
+        """
+        changed = (any(pair is not None for pair in self.click_pixels)
+                   or bool(self.click_rays))
+        self.click_pixels = (None, None, None)
+        self.click_rays = {}
+        if self.clicks_own_outcome:
+            if self.outcome is not None:
+                changed = True
+            self.outcome = None
+            self.clicks_own_outcome = False
+        return changed
 
     def follow_probe(self, logs_dir=None):
         """Take the point Slicer is publishing right now, if it has one.
@@ -571,6 +626,72 @@ def _inside(point, quad):
     return inside
 
 
+# The file Slicer reads to place its demo marks: one projection matrix per
+# camera, in the sandbox's own convention (rig 3D mm -> image pixel). The
+# sandbox computes and publishes; Slicer consumes without duplicating rig code.
+RIG_FILE = "camera-rig.json"
+
+
+def write_rig_file(sandbox, path):
+    """Publish the rig's per-camera projection matrices as JSON, atomically.
+
+    The matrices are the cameras' live ones, written as exact floats
+    (row-major, 3x4, the same convention ``ray_for`` reads), so the file and
+    the sandbox agree bit for bit. The write goes to a temporary name and is
+    renamed over the old file, so Slicer never reads a half-written rig. A
+    camera with no usable projection, or with no frame dims to give its
+    pixels meaning, is refused rather than guessed at.
+    """
+    path = pathlib.Path(path)
+    rendered = list(getattr(sandbox, "frames", None) or [])
+    entries = []
+    for index, camera in enumerate(sandbox.cameras):
+        if camera.projection is None:
+            raise RuntimeError(
+                f"camera {camera.name} has no projection matrix: rebuild the "
+                "sandbox before publishing the rig"
+            )
+        matrix = np.asarray(camera.projection, float)
+        if matrix.shape != (3, 4) or not bool(np.all(np.isfinite(matrix))):
+            raise RuntimeError(
+                f"camera {camera.name} has no usable projection matrix "
+                f"(shape {matrix.shape}): rebuild the sandbox before "
+                "publishing the rig"
+            )
+        width = height = None
+        if index < len(rendered) and rendered[index] is not None:
+            try:
+                shape = np.asarray(rendered[index]).shape
+                if len(shape) >= 2:
+                    height, width = int(shape[0]), int(shape[1])
+            except (TypeError, ValueError):
+                width = height = None
+        if width is None or height is None:
+            width = getattr(getattr(camera, "optics", None), "pixels_x", None)
+            height = getattr(getattr(camera, "optics", None), "pixels_y", None)
+        try:
+            width, height = int(width), int(height)
+        except (TypeError, ValueError):
+            raise RuntimeError(
+                f"camera {camera.name} has no frame dims: render the sandbox "
+                "before publishing the rig"
+            )
+        if width <= 0 or height <= 0:
+            raise RuntimeError(
+                f"camera {camera.name} has no frame dims: render the sandbox "
+                "before publishing the rig"
+            )
+        entries.append({"name": camera.name,
+                        "projection": matrix.tolist(),
+                        "width": width, "height": height})
+    payload = {"when": datetime.now().isoformat(timespec="seconds"),
+               "cameras": entries}
+    tmp = path.parent / (path.name + ".tmp")
+    tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    os.replace(tmp, path)
+    return path
+
+
 class SandboxWindow:
     """The four panes, and the wiring that turns events into nominations.
 
@@ -661,6 +782,11 @@ class SandboxWindow:
             if index in self.clicked:
                 u_px, v_px = self.clicked[index]
                 pane.plot(u_px, v_px, marker="o", color=CAMERA_COLOURS[index], ms=7)
+            live = self.sandbox.click_pixels
+            if live is not None and live[index] is not None:
+                u_px, v_px = live[index]
+                pane.plot(u_px, v_px, marker="o", color=CAMERA_COLOURS[index],
+                          ms=7, mfc="none", mew=1.2)
             pane.set_title(title, fontsize=9, color=CAMERA_COLOURS[index])
         self._paint_scene()
         text = self.sandbox.readout()
@@ -687,6 +813,8 @@ class SandboxWindow:
             pane.scatter(*point, color="black", marker="x", s=90, lw=1.6,
                          label="found from three rays")
             self._paint_rays(pane)
+        elif self.sandbox.click_rays:
+            self._paint_click_rays(pane)
         if self.sandbox.hypothesis_cube is not None:
             here = np.asarray(self.sandbox.hypothesis_ras, float)
             pane.scatter(*here, color="tab:purple", marker="D", s=70,
@@ -723,6 +851,36 @@ class SandboxWindow:
             pane.plot([origin[0], tip[0]], [origin[1], tip[1]], [origin[2], tip[2]],
                       color=CAMERA_COLOURS[index], lw=1.0, alpha=0.55)
 
+    def _paint_click_rays(self, pane):
+        """One line of sight per clicked camera, through the same pure ray.
+
+        Before the set is complete there is no solved point to aim the drawing
+        at, so each ray runs from its camera past the rig centre: far enough
+        to show where the lines are heading while they do not meet yet. The
+        rays themselves were computed with `ray_for`, the seam the solved path
+        uses -- only the drawn length is a window choice.
+        """
+        for index in sorted(self.sandbox.click_rays):
+            origin, direction = self.sandbox.click_rays[index]
+            origin = np.asarray(origin, float)
+            reach = float(np.linalg.norm(origin)) * 1.1
+            if not np.isfinite(reach) or reach <= 0.0:
+                reach = float(self.sandbox.geometry.standoff)
+            tip = origin + np.asarray(direction, float) * reach
+            pane.plot([origin[0], tip[0]], [origin[1], tip[1]], [origin[2], tip[2]],
+                      color=CAMERA_COLOURS[index], lw=1.0, alpha=0.55)
+
+    def detect(self):
+        """Solve with the detector and paint its marks: the --detect startup look.
+
+        The window starts clean; this recovers the old detector-driven picture
+        on demand, without touching the click-sync state.
+        """
+        if not self.sandbox.frames:
+            self.sandbox.render_all()
+        self.sandbox._remember(self.sandbox._measure())
+        self._paint()
+
     def follow(self, logs_dir=None):
         """Start or stop following the probe Slicer publishes.
 
@@ -746,13 +904,55 @@ class SandboxWindow:
         self._follow_tick()
 
     def _follow_tick(self):
-        """Clicks first, the probe only when there is no click set."""
-        before = (self.sandbox.hypothesis_cube, self.sandbox.outcome)
-        applied, _note = self.sandbox.follow_clicks(self.logs_dir)
+        """Clicks first, the probe only when there is no click set.
+
+        Files older than this session are ignored: with following on by
+        default, yesterday's files must not resurrect their marks at startup.
+        Slicer republishes live state on the next click, so recovery from a
+        mid-session restart is one click away.
+        """
+        before = (self.sandbox.hypothesis_cube, self.sandbox.outcome,
+                  self.sandbox.click_pixels)
+        applied, _note = self._follow_fresh_clicks()
         if not applied:
-            self.sandbox.follow_probe(self.logs_dir)
-        if (self.sandbox.hypothesis_cube, self.sandbox.outcome) != before:
+            self._follow_fresh_probe()
+        if (self.sandbox.hypothesis_cube, self.sandbox.outcome,
+                self.sandbox.click_pixels) != before:
             self._paint()
+
+    def _follow_fresh_clicks(self):
+        """The clicks half of the tick, with the stale-file guard.
+
+        Only the tick ignores a clicks file older than the session doing the
+        following. Direct `follow_clicks` calls stay unrestricted.
+        """
+        folder = LOGS_DIR if self.logs_dir is None else pathlib.Path(self.logs_dir)
+        try:
+            older = (folder / CLICKS_FILE).stat().st_mtime < self.sandbox.session_start
+        except OSError:
+            older = False
+        if older:
+            return False, (f"{CLICKS_FILE}: stale clicks ignored "
+                           f"(older than this session)")
+        return self.sandbox.follow_clicks(self.logs_dir)
+
+    def _follow_fresh_probe(self):
+        """The probe half of the tick, with the stale-file guard.
+
+        Only the tick ignores a probe older than the session doing the
+        following. Direct `follow_probe` calls and the `l` one-shot read stay
+        unrestricted.
+        """
+        folder = LOGS_DIR if self.logs_dir is None else pathlib.Path(self.logs_dir)
+        try:
+            older = (folder / PROBE_FILE).stat().st_mtime < self.sandbox.session_start
+        except OSError:
+            older = False
+        if older:
+            self.sandbox.hypothesis_note = (
+                f"{PROBE_FILE}: stale probe ignored (older than this session)")
+            return self.sandbox.hypothesis_note
+        return self.sandbox.follow_probe(self.logs_dir)
 
     def on_press(self, event):
         pane = self._camera_at(event)
@@ -841,7 +1041,11 @@ def main(argv=None):
     parser.add_argument("--trials", type=int, default=300,
                         help="draws per cell of the accuracy table")
     parser.add_argument("--follow", action="store_true",
-                        help="start by following the probe Slicer publishes")
+                        help="deprecated: following is on by default; accepted and ignored")
+    parser.add_argument("--no-follow", action="store_true",
+                        help="do not follow Slicer's live clicks and probe at startup")
+    parser.add_argument("--detect", action="store_true",
+                        help="solve with the detector at startup and show its marks")
     args = parser.parse_args(argv)
 
     from targeting.frame import Frame
@@ -866,7 +1070,8 @@ def main(argv=None):
                     "cameras": cameras}
         (out / "camera-frames.json").write_text(json.dumps(manifest, indent=2),
                                                 encoding="utf-8")
-        print(f"wrote {len(cameras)} frames and camera-frames.json to {out}")
+        write_rig_file(box, out / RIG_FILE)
+        print(f"wrote {len(cameras)} frames, camera-frames.json and {RIG_FILE} to {out}")
         return 0
 
     if args.out:
@@ -895,7 +1100,9 @@ def main(argv=None):
     window = SandboxWindow(box, figure)
     window.draw()
     window.render()
-    if args.follow:
+    if args.detect:
+        window.detect()
+    if not args.no_follow:
         window.follow()
     plt.show()
     return 0
