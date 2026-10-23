@@ -28,6 +28,12 @@ def test_cube_bounds_are_the_field_corners():
     assert upper == (50.0, 50.0, 50.0)
 
 
+def test_the_cube_is_opaque_wireframe_not_translucent():
+    """Transparency forces depth peeling and stalls point drags in the 3D view."""
+    assert cube.CUBE_OPACITY == 1.0
+    assert cube.CUBE_REPRESENTATION == "wireframe"
+
+
 def test_cube_bounds_follow_a_moved_field(tmp_path):
     path = tmp_path / "frame.json"
     path.write_text(

@@ -211,7 +211,7 @@ SlicerTargeting module          sphere (virtual tip), labelled point (T1, T2, �
 
 | Node | Created by | Behaviour |
 |---|---|---|
-| `FieldCube` | `tools/make_field_cube.py` | Translucent cube with visible edges, shown in the 3D view and in all three slice views (its cross-section is the orange square). Represents exactly the region `frame.json` enforces |
+| `FieldCube` | `tools/make_field_cube.py` | Opaque wireframe cube with visible edges, shown in the 3D view and in all three slice views (its cross-section is the orange square). Represents exactly the region `frame.json` enforces |
 | `Targets` | The module, on the first accepted click | A standard Slicer markups list; one labelled point (`T1`, `T2`, …) per accepted click. Select it in the `Markups` module to inspect or export; `Clear targets` empties it |
 | `VirtualTip` | The module, on the first accepted click | A small green sphere at the latest accepted point — "where the robot tip would be". Moves on every accepted click; removed by `Clear targets` |
 
@@ -400,7 +400,7 @@ exec(open(PROJECT_ROOT_OVERRIDE.joinpath("tools/make_field_cube.py").read_text()
 
 The console prints the field geometry and a line ending in
 `visible in 3D and all slice views.` You should now see a small orange square
-in the middle of the Red, Green and Yellow views, and a translucent cube in
+in the middle of the Red, Green and Yellow views, and a wireframe cube in
 the 3D view (left-drag in the 3D pane rotates it so you can see the shape).
 
 **Checkpoint 3 — open the module.** Type `Targeting` in the Modules search box

@@ -71,8 +71,11 @@ def _write_logs(folder):
             for k in (-2.0, 0.0, 2.0)]
     outside = format_camera_row(cube=(50.0, 50.0, 50.0), ras=(900.0, 0.0, 0.0),
                                 residual_px=0.2, pixels=pixels, when=when)
+    noisy = format_camera_row(cube=(50.0, 50.0, 50.0), ras=(0.0, 0.0, 0.0),
+                              residual_px=18.8, pixels=pixels, when=when)
     path = folder / "camera-targets-2026-10-19.csv"
-    path.write_text(",".join(HEADER) + "\n" + "\n".join(good + ["broken", outside]) + "\n")
+    path.write_text(",".join(HEADER) + "\n"
+                    + "\n".join(good + ["broken", outside, noisy]) + "\n")
     return folder
 
 
@@ -89,10 +92,13 @@ def main():
 
     result = logic.load_external_targets(folder)
     check("three good rows load", result["loaded"] == 3, f"loaded={result['loaded']}")
-    check("two bad rows are reported", result["skipped"] == 2, f"skipped={result['skipped']}")
+    check("three bad rows are reported", result["skipped"] == 3, f"skipped={result['skipped']}")
     check("the malformed row is named",
           any("line" in problem for problem in result["problems"]),
           str(result["problems"][:1]))
+    check("the high-residual row is named",
+          any("residual" in problem for problem in result["problems"]),
+          str([problem for problem in result["problems"] if "residual" in problem][:1]))
 
     node = slicer.mrmlScene.GetFirstNodeByName("ExternalTargets")
     check("the node exists", node is not None)
