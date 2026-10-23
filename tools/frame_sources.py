@@ -100,13 +100,34 @@ class VideoFileSource:
             )
         return grey
 
+    def seek(self, frame_index):
+        """Move to a recorded frame so a click can be solved on that frame.
+
+        A frame number is a property of a file, not of a live camera: only
+        this source offers it. The next ``grab`` returns that frame and then
+        continues forward from there.
+        """
+        frame_index = int(frame_index)
+        if frame_index < 0:
+            raise ValueError("a frame number cannot be negative")
+        if not self.capture.set(cv2.CAP_PROP_POS_FRAMES, frame_index):
+            raise RuntimeError(
+                f"cannot seek {self.path} to frame {frame_index}")
+        return frame_index
+
 
 class CameraSource:
-    """A real camera. Written now so the shape is fixed; inert without hardware."""
+    """A real camera. Written now so the shape is fixed; inert without hardware.
 
-    def __init__(self, device, optics):
+    ``resize`` is for the Pico's 160x120 UVC stream: the HM01B0 sensor is
+    320x320, but the standard USB path exposes a quarter of it. Resizing makes
+    the calibration file describe the pixels the rest of the program sees.
+    """
+
+    def __init__(self, device, optics, resize=False):
         self.device = device
         self.optics = optics
+        self.resize = bool(resize)
         self.capture = None
 
     def grab(self):
@@ -121,8 +142,12 @@ class CameraSource:
         grey = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         expected = (self.optics.pixels_y, self.optics.pixels_x)
         if grey.shape != expected:
-            raise RuntimeError(
-                f"the camera at {self.device!r} gives {grey.shape} frames, but the camera is "
-                f"{expected}; rescale the stream or fix the optics"
-            )
+            if self.resize:
+                grey = cv2.resize(grey, (self.optics.pixels_x, self.optics.pixels_y),
+                                  interpolation=cv2.INTER_LINEAR)
+            else:
+                raise RuntimeError(
+                    f"the camera at {self.device!r} gives {grey.shape} frames, but the camera is "
+                    f"{expected}; rescale the stream or fix the optics"
+                )
         return grey
