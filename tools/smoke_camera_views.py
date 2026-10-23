@@ -71,6 +71,8 @@ def main():
         CAMERA_CLICKS_NODE_NAME,
         CAMERA_CLICKS_NODE_NAMES,
         CAMERA_CLICK_COLOURS,
+        STREAM_FRUSTUM_NODE_NAMES,
+        STREAM_ORIGIN_NODE_NAMES,
         TargetingLogic,
     )
     from targeting.clicks import read_clicks
@@ -110,6 +112,12 @@ def main():
     result = logic.load_camera_views(folder)
     check("three views loaded", result["status"] == "loaded" and len(result["views"]) == 3,
           str(result.get("problems", ())))
+    positions = [slicer.mrmlScene.GetFirstNodeByName(name)
+                 for name in (*STREAM_FRUSTUM_NODE_NAMES,
+                              *STREAM_ORIGIN_NODE_NAMES)]
+    check("camera positions are shown for a calibrated frame set",
+          all(node is not None for node in positions),
+          str([node.GetName() if node else None for node in positions]))
     for widget_name, node_name in result["views"].items():
         widget = slicer.app.layoutManager().sliceWidget(widget_name)
         background = widget.sliceLogic().GetSliceCompositeNode().GetBackgroundVolumeID()
@@ -118,6 +126,8 @@ def main():
               node is not None and node.GetName() == node_name)
         check(f"{widget_name} is axial",
               abs(widget.mrmlSliceNode().GetSliceToRAS().GetElement(0, 2)) < 1e-9)
+        check(f"{widget_name} slice plane is hidden in 3D",
+              not widget.mrmlSliceNode().GetSliceVisible())
     empty = logic.load_camera_views(pathlib.Path("/tmp/opencode/no-frames-here"))
     check("a folder with no manifest is reported, not crashed",
           empty["status"] == "nothing")
@@ -252,6 +262,45 @@ def main():
         check(f"click {tag} wears its camera's colour",
               colour == want,
               f"colour={colour} want={want}")
+        selected = (
+            tuple(round(c, 3) for c in node.GetDisplayNode().GetSelectedColor())
+            if node is not None and node.GetDisplayNode() is not None
+            else None)
+        check(f"click {tag} keeps its camera's colour when selected",
+              selected == want,
+              f"selected={selected} want={want}")
+
+    guide_rays = [
+        slicer.mrmlScene.GetFirstNodeByName(f"CameraStreamClickRayC{index}")
+        for index in (1, 2, 3)
+    ]
+    guide_lines = [
+        slicer.mrmlScene.GetFirstNodeByName(
+            f"CameraStreamEpipolarC{target}FromC{source}")
+        for source in (1, 2, 3) for target in (1, 2, 3)
+        if source != target
+    ]
+    check("three happy-path guide rays exist",
+          all(node is not None and node.IsA("vtkMRMLModelNode")
+              and node.GetPolyData() is not None
+              and node.GetPolyData().GetNumberOfPoints() == 2
+              for node in guide_rays),
+          f"rays={[node.GetPolyData().GetNumberOfPoints()
+                   if node is not None and node.GetPolyData() else None
+                   for node in guide_rays]}")
+    check("six happy-path epipolar lines exist",
+          all(node is not None and node.GetNumberOfControlPoints() == 2
+              for node in guide_lines),
+          f"lines={[node.GetNumberOfControlPoints() if node is not None else None
+                    for node in guide_lines]}")
+    guide_image = PROJECT_ROOT / "logs" / "camera-views-guide.png"
+    try:
+        slicer.app.processEvents()
+        slicer.util.mainWindow().grab().save(str(guide_image))
+        check("the three-camera guide is captured",
+              guide_image.is_file(), str(guide_image))
+    except Exception as exc:  # noqa: BLE001 - evidence, not the test
+        check("the three-camera guide is captured", False, str(exc))
 
     red_node = click_nodes[0]
     red_label = red_node.GetNthControlPointLabel(0) if red_node is not None else ""

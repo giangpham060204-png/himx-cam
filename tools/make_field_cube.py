@@ -10,9 +10,12 @@ prints what displayable nodes the scene already had, so "the cube is missing"
 and "the cube is merely hidden" are easy to tell apart.
 
 The cube spans exactly the field frame.json describes: 100mm per side,
-centred on RAS (0,0,0). It is translucent with visible edges, and it is shown
-in the 3D view and in all three slice views, so it can be aimed at during the
-hover check. If the field ever changes, edit frame.json, not this file.
+centred on RAS (0,0,0). It is drawn as an opaque wireframe with visible
+edges, and it is shown in the 3D view and in all three slice views, so it can
+be aimed at during the hover check. The wireframe is deliberate: a
+translucent surface makes Slicer's 3D view re-render through its expensive
+transparency path, which turns point drags into visible stalls. If the field
+ever changes, edit frame.json, not this file.
 """
 
 from __future__ import annotations
@@ -64,7 +67,10 @@ FRAME_PATH = PROJECT_ROOT / "frame.json"
 
 NODE_NAME = "FieldCube"
 CUBE_COLOR = (0.90, 0.45, 0.40)
-CUBE_OPACITY = 0.35
+# Opaque wireframe: no transparent surface means no depth-peeling render
+# path, so dragging points in the 3D view stays responsive.
+CUBE_OPACITY = 1.0
+CUBE_REPRESENTATION = "wireframe"
 
 _RAS_AXES = ("R", "A", "S")
 
@@ -141,8 +147,12 @@ def run():
 
     display = model.GetDisplayNode()
     display.SetColor(*CUBE_COLOR)
+    display.SetEdgeColor(*CUBE_COLOR)
+    display.SetSelectedColor(*CUBE_COLOR)
     display.SetOpacity(CUBE_OPACITY)
     display.SetEdgeVisibility(True)
+    if CUBE_REPRESENTATION == "wireframe":
+        display.SetRepresentation(display.WireframeRepresentation)
     # Visibility2D is the current API; the older SliceIntersectionVisibility
     # setter is deprecated and prints a warning (checked against Slicer 5.12.3).
     display.SetVisibility2D(True)
@@ -151,8 +161,8 @@ def run():
     slicer.util.resetSliceViews()
     slicer.app.processEvents()
     print(
-        f"{NODE_NAME} created: translucent, edges on, visible in 3D and all "
-        "slice views."
+        f"{NODE_NAME} created: opaque wireframe, edges on, visible in 3D and "
+        "all slice views."
     )
     print("next: run tools/check_live_mapping.py and hold the mouse still on")
     print("three spots inside the cube.")
