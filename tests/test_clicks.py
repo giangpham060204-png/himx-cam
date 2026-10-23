@@ -31,6 +31,24 @@ def test_a_published_click_set_reads_back(tmp_path):
     assert CLICKS_FILE in note
 
 
+def test_a_published_frame_number_reads_back(tmp_path):
+    clicks, _ = read_clicks(write_clicks(tmp_path, frame_id=42))
+
+    assert clicks.frame_id == 42
+
+
+def test_a_clicks_file_without_a_frame_number_still_reads(tmp_path):
+    clicks, _ = read_clicks(write_clicks(tmp_path))
+
+    assert clicks.frame_id is None
+
+
+def test_a_non_integer_frame_number_is_refused(tmp_path):
+    clicks, note = read_clicks(write_clicks(tmp_path, frame_id="forty-two"))
+
+    assert clicks is None and "frame_id" in note
+
+
 def test_a_missing_clicks_file_is_a_sentence(tmp_path):
     clicks, note = read_clicks(tmp_path / CLICKS_FILE)
 

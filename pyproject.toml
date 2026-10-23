@@ -17,6 +17,7 @@ dependencies = [
     "opencv-contrib-python-headless>=4.8",
     "numpy>=1.26",
     "matplotlib>=3.8",
+    "pyigtl>=0.3.4",
 ]
 
 [dependency-groups]

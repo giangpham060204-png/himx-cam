@@ -26,6 +26,7 @@ class Clicks:
 
     pixels: tuple
     when: str = ""
+    frame_id: int | None = None
 
     def is_complete(self) -> bool:
         """True once every view has been clicked; a point needs all three."""
@@ -66,10 +67,16 @@ def read_clicks(path) -> tuple:
             return None, f"{path.name}: a pixel is null until its view is clicked"
     pixels = tuple(parsed)
     when = str(payload.get("when", ""))
+    frame_id = payload.get("frame_id")
+    if frame_id is not None:
+        try:
+            frame_id = int(frame_id)
+        except (TypeError, ValueError):
+            return None, f"{path.name}: frame_id must be an integer or null"
     if all(pixel is None for pixel in pixels):
-        return Clicks(pixels=pixels, when=when), \
+        return Clicks(pixels=pixels, when=when, frame_id=frame_id), \
             f"{path.name}: empty clicks (no view clicked yet)"
-    return Clicks(pixels=pixels, when=when), \
+    return Clicks(pixels=pixels, when=when, frame_id=frame_id), \
         f"{path.name}: clicks read"
 
 

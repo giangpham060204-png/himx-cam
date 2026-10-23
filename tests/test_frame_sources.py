@@ -87,6 +87,24 @@ def test_a_video_file_source_reads_back_what_was_written(tmp_path):
     assert source.grab().mean() == pytest.approx(200, abs=3)
 
 
+def test_a_video_source_can_seek_to_a_recorded_frame(tmp_path):
+    path = tmp_path / "seek.avi"
+    writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"MJPG"), 10.0,
+                             (OPTICS.pixels_x, OPTICS.pixels_y), isColor=False)
+    if not writer.isOpened():
+        pytest.skip("this OpenCV build has no MJPG encoder")
+    for value in (30, 90, 200):
+        writer.write(np.full((OPTICS.pixels_y, OPTICS.pixels_x), value, np.uint8))
+    writer.release()
+
+    source = frame_sources.VideoFileSource(path, OPTICS)
+    assert source.grab().mean() == pytest.approx(30, abs=3)
+    source.seek(0)
+    assert source.grab().mean() == pytest.approx(30, abs=3)
+    source.seek(2)
+    assert source.grab().mean() == pytest.approx(200, abs=3)
+
+
 def test_a_missing_video_is_refused_by_name(tmp_path):
     with pytest.raises(RuntimeError, match="clip.avi"):
         frame_sources.VideoFileSource(tmp_path / "clip.avi", OPTICS)
@@ -117,6 +135,26 @@ def test_a_camera_at_the_wrong_resolution_is_refused(tmp_path):
     finally:
         if source.capture is not None:
             source.capture.release()
+
+
+def test_a_camera_can_resize_a_smaller_uvc_stream(tmp_path):
+    """The Pico path is 160x120; the calibration describes the resized pixels."""
+    path = tmp_path / "uvc.avi"
+    writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"MJPG"), 10.0,
+                             (160, 120), isColor=False)
+    if not writer.isOpened():
+        pytest.skip("this OpenCV build has no MJPG encoder")
+    writer.write(np.full((120, 160), 128, np.uint8))
+    writer.release()
+
+    source = frame_sources.CameraSource(str(path), OPTICS, resize=True)
+    try:
+        frame = source.grab()
+    finally:
+        if source.capture is not None:
+            source.capture.release()
+
+    assert frame.shape == (OPTICS.pixels_y, OPTICS.pixels_x)
 
 
 def test_a_camera_record_carries_the_calibration_with_the_frames():

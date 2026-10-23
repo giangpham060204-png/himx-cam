@@ -36,6 +36,12 @@ HEADER = (
 # are two different things; conflating them would make old logs unreadable.
 REQUIRED = HEADER[:-1]
 
+# A camera-derived point is only a measurement when the three clicks agree
+# with one 3D point. Five pixels is deliberately generous for a 320x320
+# HM01B0 frame; a set above this is a misclick, not a measurement, and must
+# not be logged or shown as a solved point.
+MAX_RESIDUAL_PX = 5.0
+
 FILE_PREFIX = "camera-targets-"
 CAMERA_COUNT = 3
 
