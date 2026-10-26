@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -25,6 +26,11 @@ MANUAL_STEPPER STEPPER=m2 MOVE=10 SPEED=5 ACCEL=50
 MANUAL_STEPPER STEPPER=m3 SET_POSITION=0
 MANUAL_STEPPER STEPPER=m3 MOVE=5 SPEED=5 ACCEL=50
 """
+
+
+def simulator_config(text: str) -> str:
+    """Map Pico gpioN pin names to numeric simulator pin names."""
+    return re.sub(r"\bgpio(\d+)\b", r"\1", text)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -65,7 +71,7 @@ def main(argv: list[str] | None = None) -> int:
         tmp_path = Path(tmp)
         printer_cfg = tmp_path / "printer.cfg"
         printer_cfg.write_text(
-            generate_printer_config(config, include_tmc=False)
+            simulator_config(generate_printer_config(config, include_tmc=False))
         )
         gcode = tmp_path / "test.gcode"
         gcode.write_text(TEST_GCODE)
