@@ -63,7 +63,9 @@ uv run python arm-control/tools/arm_web.py --open
 
 The web console binds to `127.0.0.1` by default, uses a per-run token, and
 sends every motion through the same `ArmController` safety layer as the CLI.
-The physical e-stop remains the primary stop.
+It is a controller surface: left stick for M1/M3, right stick for M2, plus
+home, connect, and emergency-stop buttons. The physical e-stop remains the
+primary stop.
 
 The default Moonraker URL is `http://127.0.0.1:7125`. The default config is
 `arm-control/arm_control/config/arm.toml`; the serial path in it is a
