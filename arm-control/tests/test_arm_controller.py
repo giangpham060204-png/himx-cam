@@ -9,6 +9,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 from arm_control.config import load_config  # noqa: E402
 from arm_control.controller import ArmController  # noqa: E402
+from arm_control.stopflag import StopFlag  # noqa: E402
 from arm_control.errors import (  # noqa: E402
     ArmError,
     MoonrakerError,
@@ -41,6 +42,7 @@ class FakeClient:
         }
         self.fail = fail
         self.calls = []
+        self.on_run = None
         self.ready_calls = []
         self.notification_handler = None
         self.store = {"gcode_store": [{"message": "ok"}]}
@@ -55,6 +57,8 @@ class FakeClient:
 
     def run_script(self, script, timeout=120.0):
         self.calls.append(("run", script))
+        if self.on_run is not None:
+            self.on_run(script)
         if self.fail is not None:
             raise self.fail
 
@@ -470,3 +474,85 @@ def test_fault_resets_m2_total_deg():
     controller._fault("boom")
 
     assert controller.m2_total_deg == 0.0
+
+
+def test_request_stop_refuses_next_move_without_emergency(tmp_path):
+    flag = StopFlag(tmp_path / "stop.request")
+    client = FakeClient()
+    controller = ArmController(
+        CONFIG, client, RecordingAudit(), stop_flag=flag
+    )
+    controller.connect()
+    controller.home("m1")
+    client.calls.clear()
+
+    controller.request_stop()
+
+    assert flag.requested() is True
+    assert controller.status()["stop_requested"] is True
+    with pytest.raises(ArmError, match="controlled stop"):
+        controller.move_joint("m1", 1.0)
+    assert client.calls == []
+    assert not any(call[0] == "estop" for call in client.calls)
+    assert any(event == "stop" for event, _ in controller.audit.entries)
+
+
+def test_clear_stop_allows_next_move(tmp_path):
+    flag = StopFlag(tmp_path / "stop.request")
+    client = FakeClient()
+    controller = ArmController(
+        CONFIG, client, RecordingAudit(), stop_flag=flag
+    )
+    controller.connect()
+    controller.home("m1")
+    client.calls.clear()
+
+    controller.request_stop()
+    controller.clear_stop()
+    controller.move_joint("m1", 1.0)
+
+    assert flag.requested() is False
+    assert client.calls[0][0] == "run"
+    assert any(event == "resume" for event, _ in controller.audit.entries)
+
+
+def test_external_stop_flag_is_seen_by_another_controller(tmp_path):
+    flag_path = tmp_path / "stop.request"
+    first = StopFlag(flag_path)
+    second = StopFlag(flag_path)
+    client = FakeClient()
+    controller = ArmController(
+        CONFIG, client, RecordingAudit(), stop_flag=second
+    )
+    controller.connect()
+    controller.home("m1")
+    client.calls.clear()
+
+    first.request()
+
+    with pytest.raises(ArmError, match="controlled stop"):
+        controller.move_joint("m1", 1.0)
+    assert client.calls == []
+
+
+def test_cycle_stops_after_current_move(tmp_path):
+    flag = StopFlag(tmp_path / "stop.request")
+    client = FakeClient()
+    controller = ArmController(
+        CONFIG, client, RecordingAudit(), stop_flag=flag
+    )
+    controller.connect()
+    controller.home("m1")
+    client.calls.clear()
+
+    def stop_after_first(script):
+        if not flag.requested():
+            controller.request_stop()
+
+    client.on_run = stop_after_first
+    with pytest.raises(ArmError, match="controlled stop"):
+        controller.cycle([("m1", 1.0), ("m1", 2.0)])
+
+    runs = [call for call in client.calls if call[0] == "run"]
+    assert len(runs) == 1
+    assert "MOVE=1" in runs[0][1]
