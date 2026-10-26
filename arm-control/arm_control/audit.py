@@ -18,13 +18,19 @@ class NullAudit:
 
 
 class AuditLog:
-    def __init__(self, path: str | Path):
+    def __init__(
+        self,
+        path: str | Path,
+        context: dict[str, object] | None = None,
+    ):
         self.path = Path(path)
+        self.context = dict(context or {})
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._handle = self.path.open("a", encoding="utf-8")
 
     def record(self, event: str, **fields: object) -> None:
         payload = {
+            **self.context,
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "event": event,
             **fields,
