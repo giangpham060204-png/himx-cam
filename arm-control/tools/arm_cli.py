@@ -17,6 +17,7 @@ from arm_control.audit import AuditLog  # noqa: E402
 from arm_control.config import load_config  # noqa: E402
 from arm_control.controller import ArmController  # noqa: E402
 from arm_control.errors import ArmError  # noqa: E402
+from arm_control.stopflag import StopFlag  # noqa: E402
 from arm_control.moonraker import MoonrakerClient  # noqa: E402
 from run_context import build_context  # noqa: E402
 from transport_factory import build_transport  # noqa: E402
@@ -73,6 +74,8 @@ def build_parser() -> argparse.ArgumentParser:
     tmc = sub.add_parser("tmc")
     tmc.add_argument("axis", choices=["m1", "m2", "m3"])
 
+    sub.add_parser("stop")
+    sub.add_parser("resume")
     sub.add_parser("estop")
     sub.add_parser("restart")
     return parser
@@ -88,7 +91,12 @@ def build_controller(args: argparse.Namespace) -> ArmController:
     )
     audit = AuditLog(log_path, context=build_context(ROOT, args.operator, args.hardware_serial))
     transport = build_transport(args.url, args.transport, args.timeout)
-    return ArmController(config, MoonrakerClient(transport), audit)
+    return ArmController(
+        config,
+        MoonrakerClient(transport),
+        audit,
+        stop_flag=StopFlag(ROOT / "logs" / "arm" / "stop.request"),
+    )
 
 
 def _parse_moves(values: list[str]) -> list[tuple[str, float]]:
@@ -121,7 +129,7 @@ def _session(controller: ArmController, input_fn=input) -> int:
                 break
             if command == "help":
                 print("status | home AXIS|all | jog AXIS DELTA | move AXIS POSITION")
-                print("pose | endstops | tmc AXIS | estop | quit")
+                print("pose | endstops | tmc AXIS | stop | resume | estop | quit")
             elif command == "status":
                 print(json.dumps(controller.status(), indent=2, sort_keys=True))
             elif command == "home":
@@ -150,6 +158,12 @@ def _session(controller: ArmController, input_fn=input) -> int:
                 if len(words) != 2:
                     raise ArmError("usage: tmc AXIS")
                 print(json.dumps(controller.tmc_dump(words[1]), indent=2))
+            elif command == "stop":
+                controller.request_stop()
+                print("controlled stop requested")
+            elif command == "resume":
+                controller.clear_stop()
+                print("controlled stop cleared")
             elif command == "estop":
                 controller.stop()
                 print("emergency stop sent")
@@ -166,6 +180,16 @@ def run(
     controller: ArmController,
     input_fn=input,
 ) -> int:
+    if args.command == "stop":
+        controller.request_stop()
+        print("controlled stop requested")
+        return 0
+
+    if args.command == "resume":
+        controller.clear_stop()
+        print("controlled stop cleared")
+        return 0
+
     if args.command == "estop":
         controller.stop()
         print("emergency stop sent")

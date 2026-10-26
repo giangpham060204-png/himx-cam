@@ -46,6 +46,12 @@ class FakeController:
     def restart(self):
         self.calls.append(("restart",))
 
+    def request_stop(self):
+        self.calls.append(("request_stop",))
+
+    def clear_stop(self):
+        self.calls.append(("clear_stop",))
+
     def endstops(self):
         return {"m1": "open"}
 
@@ -175,3 +181,29 @@ def test_restart_command(capsys):
     assert _run(["restart"], controller) == 0
 
     assert controller.calls == [("connect",), ("restart",)]
+
+
+def test_stop_and_resume_skip_connect(capsys):
+    controller = FakeController()
+
+    assert _run(["stop"], controller) == 0
+    assert _run(["resume"], controller) == 0
+
+    assert controller.calls == [("request_stop",), ("clear_stop",)]
+
+
+def test_session_stop_and_resume(capsys):
+    controller = FakeController()
+    lines = iter(["stop", "resume", "quit"])
+
+    assert arm_cli.main(
+        ["session"],
+        controller_factory=lambda args: controller,
+        input_fn=lambda prompt: next(lines),
+    ) == 0
+
+    assert controller.calls == [
+        ("connect",),
+        ("request_stop",),
+        ("clear_stop",),
+    ]

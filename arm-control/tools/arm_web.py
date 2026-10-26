@@ -28,6 +28,7 @@ from arm_control.audit import AuditLog  # noqa: E402
 from arm_control.config import AXIS_NAMES, LINEAR, RobotConfig, load_config  # noqa: E402
 from arm_control.controller import ArmController  # noqa: E402
 from arm_control.errors import ArmError  # noqa: E402
+from arm_control.stopflag import StopFlag  # noqa: E402
 from arm_control.moonraker import MoonrakerClient  # noqa: E402
 from run_context import build_context  # noqa: E402
 from transport_factory import build_transport  # noqa: E402
@@ -98,6 +99,9 @@ class WebState:
                 "estopped": self.controller.estopped,
                 "faulted": getattr(self.controller, "faulted", False),
                 "fault_reason": getattr(self.controller, "fault_reason", ""),
+                "stop_requested": getattr(
+                    self.controller, "stop_requested", False
+                ),
                 "homed": dict(self.controller.homed),
                 "positions": dict(self.controller.positions),
                 "tip": None,
@@ -394,7 +398,12 @@ def build_controller(args: argparse.Namespace) -> ArmController:
     )
     audit = AuditLog(log_path, context=build_context(ROOT, args.operator, args.hardware_serial))
     transport = build_transport(args.url, args.transport, args.timeout)
-    return ArmController(config, MoonrakerClient(transport), audit)
+    return ArmController(
+        config,
+        MoonrakerClient(transport),
+        audit,
+        stop_flag=StopFlag(ROOT / "logs" / "arm" / "stop.request"),
+    )
 
 
 def main(

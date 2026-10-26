@@ -28,6 +28,7 @@ class FakeController:
         self.estopped = False
         self.faulted = False
         self.fault_reason = ""
+        self.stop_requested = False
         self.calls = []
 
     def connect(self):
@@ -42,6 +43,7 @@ class FakeController:
             "estopped": self.estopped,
             "faulted": self.faulted,
             "fault_reason": self.fault_reason,
+            "stop_requested": self.stop_requested,
             "config_hash": self.config.config_hash,
         }
 
@@ -293,3 +295,13 @@ def test_status_reports_fault(web):
     assert status == 200
     assert payload["status"]["faulted"] is True
     assert "shutdown" in payload["status"]["fault_reason"]
+
+
+def test_status_reports_controlled_stop(web):
+    state, controller, base = web
+    controller.stop_requested = True
+
+    status, payload = _request(base, "/api/status")
+
+    assert status == 200
+    assert payload["status"]["stop_requested"] is True

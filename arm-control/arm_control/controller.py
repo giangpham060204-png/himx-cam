@@ -19,6 +19,7 @@ from .errors import (
 )
 from .kinematics import JointPose, forward
 from .moonraker import MoonrakerClient
+from .stopflag import StopFlag
 
 
 class ArmController:
@@ -27,10 +28,13 @@ class ArmController:
         config: RobotConfig,
         client: MoonrakerClient,
         audit: Audit | None = None,
+        stop_flag: StopFlag | None = None,
     ):
         self.config = config
         self.client = client
         self.audit = audit or NullAudit()
+        self.stop_flag = stop_flag or StopFlag()
+        self.stop_requested = False
         self.homed = {name: False for name in AXIS_NAMES}
         self.positions: dict[str, float | None] = {
             name: None for name in AXIS_NAMES
@@ -84,6 +88,7 @@ class ArmController:
             "estopped": self.estopped,
             "faulted": self.faulted,
             "fault_reason": self.fault_reason,
+            "stop_requested": self._sync_stop_flag(),
             "last_gcode_response": self.last_gcode_response,
             "m2_total_deg": self.m2_total_deg,
             "config_hash": self.config.config_hash,
@@ -208,10 +213,31 @@ class ArmController:
         joints = JointPose(m1=m1, m2=m2, m3=m3)
         return forward(self.config, joints)
 
+    def request_stop(self) -> None:
+        if self.stop_requested:
+            return
+        self.stop_flag.request()
+        self.stop_requested = True
+        self.audit.record("stop", config_hash=self.config.config_hash)
+
+    def clear_stop(self) -> None:
+        if not self.stop_requested and not self.stop_flag.requested():
+            return
+        self.stop_flag.clear()
+        self.stop_requested = False
+        self.audit.record("resume", config_hash=self.config.config_hash)
+
+    def _sync_stop_flag(self) -> bool:
+        if self.stop_flag.requested():
+            self.stop_requested = True
+        return self.stop_requested
+
     def stop(self) -> None:
         try:
             self.client.emergency_stop()
         finally:
+            self.stop_flag.clear()
+            self.stop_requested = False
             self.estopped = True
             self.homed = {name: False for name in AXIS_NAMES}
             self.positions = {name: None for name in AXIS_NAMES}
@@ -227,6 +253,8 @@ class ArmController:
 
     def restart(self) -> None:
         self.client.firmware_restart()
+        self.stop_flag.clear()
+        self.stop_requested = False
         self.homed = {name: False for name in AXIS_NAMES}
         self.positions = {name: None for name in AXIS_NAMES}
         self.estopped = False
@@ -346,6 +374,10 @@ class ArmController:
             raise ArmError(
                 f"controller faulted: {self.fault_reason}; "
                 "restart Klipper and reconnect"
+            )
+        if self._sync_stop_flag():
+            raise ArmError(
+                "controlled stop is latched; run resume before moving"
             )
 
     def _require_ready(self) -> None:
