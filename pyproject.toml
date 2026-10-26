@@ -18,7 +18,13 @@ dependencies = [
     "numpy>=1.26",
     "matplotlib>=3.8",
     "pyigtl>=0.3.4",
+    "websocket-client>=1.8",
 ]
 
 [dependency-groups]
-dev = ["pytest>=8"]
+dev = [
+    "pytest>=8",
+    "websockets>=12",
+    "ruff>=0.8",
+    "mypy>=1.11",
+]
