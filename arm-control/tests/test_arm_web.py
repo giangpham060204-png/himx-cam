@@ -248,6 +248,22 @@ def test_index_contains_token_and_static_assets(web):
         assert body
 
 
+def test_index_has_only_up_down_and_estop_controls(web):
+    _, _, base = web
+
+    with urllib.request.urlopen(base + "/", timeout=5) as response:
+        html = response.read().decode()
+
+    assert html.count("data-jog-axis=") == 6
+    assert 'data-jog-axis="m1"' in html
+    assert 'data-jog-axis="m2"' in html
+    assert 'data-jog-axis="m3"' in html
+    assert 'id="estop"' in html
+    assert 'id="home"' not in html
+    assert 'id="connect"' not in html
+    assert "data-stick" not in html
+
+
 def test_unknown_path_is_404(web):
     _, _, base = web
 

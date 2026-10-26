@@ -9,40 +9,39 @@
 </head>
 <body>
   <main class="stage">
-    <span id="link-led" class="link-led" role="status" aria-label="Connection offline"></span>
+    <span id="link-led" class="link-led" role="status" aria-label="Offline"></span>
 
-    <section class="controller" id="controller" aria-label="Arm controller">
-      <button id="home" class="utility home" type="button" aria-label="Home all axes" title="Home all">
-        <svg viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M4 11.2 12 4l8 7.2v8.3a1.5 1.5 0 0 1-1.5 1.5h-4.2v-5.5H9.7V21H5.5A1.5 1.5 0 0 1 4 19.5z"/>
-        </svg>
-      </button>
-
-      <button id="connect" class="utility connect" type="button" aria-label="Connect to Moonraker" title="Connect">
-        <svg viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M12 3v8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-          <path d="M7.3 6.2a8 8 0 1 0 9.4 0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-        </svg>
-      </button>
-
+    <section class="controller" aria-label="Arm controller">
       <button id="estop" class="estop" type="button" aria-label="Emergency stop" title="Emergency stop">
         <span class="stop-mark"></span>
       </button>
 
-      <div class="stick-slot left">
-        <span class="axis-tag tag-x">M1 <b id="m1-value">—</b></span>
-        <span class="axis-tag tag-y">M3 <b id="m3-value">—</b></span>
-        <div class="stick" data-stick="left" tabindex="0" role="application" aria-label="M1 horizontal, M3 vertical analog jog">
-          <span class="stick-ring"></span>
-          <span class="stick-knob"></span>
+      <div class="axis-bank">
+        <div class="axis">
+          <span class="axis-label">M1</span>
+          <span id="m1-value" class="axis-value">—</span>
+          <div class="rocker">
+            <button type="button" data-jog-axis="m1" data-delta="1" aria-label="M1 up">▲</button>
+            <button type="button" data-jog-axis="m1" data-delta="-1" aria-label="M1 down">▼</button>
+          </div>
         </div>
-      </div>
 
-      <div class="stick-slot right">
-        <span class="axis-tag tag-y">M2 <b id="m2-value">—</b><i>°</i></span>
-        <div class="stick" data-stick="right" tabindex="0" role="application" aria-label="M2 vertical analog jog">
-          <span class="stick-ring"></span>
-          <span class="stick-knob"></span>
+        <div class="axis">
+          <span class="axis-label">M2</span>
+          <span id="m2-value" class="axis-value">—</span>
+          <div class="rocker">
+            <button type="button" data-jog-axis="m2" data-delta="1" aria-label="M2 up">▲</button>
+            <button type="button" data-jog-axis="m2" data-delta="-1" aria-label="M2 down">▼</button>
+          </div>
+        </div>
+
+        <div class="axis">
+          <span class="axis-label">M3</span>
+          <span id="m3-value" class="axis-value">—</span>
+          <div class="rocker">
+            <button type="button" data-jog-axis="m3" data-delta="1" aria-label="M3 up">▲</button>
+            <button type="button" data-jog-axis="m3" data-delta="-1" aria-label="M3 down">▼</button>
+          </div>
         </div>
       </div>
     </section>
