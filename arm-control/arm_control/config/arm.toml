@@ -1,0 +1,93 @@
+[robot]
+stack = "A"
+r0_mm = 60.0
+hub_height_mm = 140.0
+m1_y_offset_mm = 0.0
+arm_length_mm = 110.0
+m2_cable_wind_deg = 360.0
+slip_ring = false
+home_order = ["m3", "m2", "m1"]
+
+[klipper]
+serial = "/dev/serial/by-id/usb-Klipper_rp2040_0000000000000000-if00"
+kinematics = "none"
+
+[axis.m1]
+kind = "linear"
+full_steps_per_rev = 200
+microsteps = 16
+gear_ratio = 1.0
+lead_mm_per_rev = 8.0
+invert_dir = false
+min_pos = 0.0
+max_pos = 200.0
+max_speed = 10.0
+max_accel = 50.0
+home_direction = -1
+home_position = 0.0
+home_travel = 20.0
+home_speed = 5.0
+step_pin = "gpio2"
+dir_pin = "gpio3"
+enable_pin = "gpio6"
+enable_active_low = true
+endstop_pin = "gpio13"
+endstop_pullup = true
+endstop_inverted = false
+uart_pin = "gpio1"
+tx_pin = "gpio0"
+uart_address = 0
+run_current = 1.0
+
+[axis.m2]
+kind = "rotary"
+full_steps_per_rev = 200
+microsteps = 16
+gear_ratio = 1.0
+invert_dir = false
+min_pos = -360.0
+max_pos = 360.0
+max_speed = 30.0
+max_accel = 180.0
+home_direction = -1
+home_position = 0.0
+home_travel = 0.0
+home_speed = 10.0
+step_pin = "gpio7"
+dir_pin = "gpio8"
+enable_pin = "gpio9"
+enable_active_low = true
+endstop_pin = "gpio14"
+endstop_pullup = true
+endstop_inverted = false
+uart_pin = "gpio1"
+tx_pin = "gpio0"
+uart_address = 1
+run_current = 1.0
+
+[axis.m3]
+kind = "linear"
+full_steps_per_rev = 200
+microsteps = 16
+gear_ratio = 1.0
+lead_mm_per_rev = 8.0
+invert_dir = false
+min_pos = 0.0
+max_pos = 100.0
+max_speed = 10.0
+max_accel = 50.0
+home_direction = -1
+home_position = 0.0
+home_travel = 20.0
+home_speed = 5.0
+step_pin = "gpio10"
+dir_pin = "gpio11"
+enable_pin = "gpio12"
+enable_active_low = true
+endstop_pin = "gpio15"
+endstop_pullup = true
+endstop_inverted = false
+uart_pin = "gpio1"
+tx_pin = "gpio0"
+uart_address = 2
+run_current = 1.0
