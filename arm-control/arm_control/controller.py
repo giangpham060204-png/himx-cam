@@ -23,7 +23,8 @@ from .moonraker import MoonrakerClient
 
 _TMC_FAULT_FIELDS = ("otpw", "ot", "s2g", "s2vs", "uv_cp", "drv_err")
 _TMC_FAULT_RE = re.compile(
-    r"\b(" + "|".join(_TMC_FAULT_FIELDS) + r")\s*[=:]\s*1\b"
+    r"\b(" + "|".join(_TMC_FAULT_FIELDS) + r")\s*[=:]\s*1\b",
+    flags=re.IGNORECASE,
 )
 
 
@@ -137,6 +138,7 @@ class ArmController:
         try:
             self._require_axis(axis_name)
             self._require_operable()
+            self._require_ready()
             current = self.positions[axis_name]
             if current is None or not self.homed[axis_name]:
                 raise NotHomedError(f"axis {axis_name} is not homed")
@@ -198,8 +200,20 @@ class ArmController:
         except ArmError as exc:
             self._record_refusal(axis_name, exc)
             raise
-        self.client.run_script(f"DUMP_TMC STEPPER={axis_name}")
-        store = self.client.gcode_store(count=20)
+        command = f"DUMP_TMC STEPPER={axis_name}"
+        try:
+            self.client.run_script(command)
+            store = self.client.gcode_store(count=20)
+        except Exception as exc:
+            self._fault(str(exc))
+            self.audit.record(
+                "error",
+                axis=axis_name,
+                command=command,
+                error=str(exc),
+                config_hash=self.config.config_hash,
+            )
+            raise
         text = json.dumps(store, sort_keys=True)
         faults = sorted(set(_TMC_FAULT_RE.findall(text)))
         if faults:
