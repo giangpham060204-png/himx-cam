@@ -14,6 +14,7 @@ from arm_control.errors import (  # noqa: E402
     MoonrakerError,
     NotHomedError,
     OutOfRangeError,
+    TmcFaultError,
 )
 from arm_control.kinematics import JointPose  # noqa: E402
 
@@ -41,6 +42,7 @@ class FakeClient:
         self.fail = fail
         self.calls = []
         self.ready_calls = []
+        self.store = {"gcode_store": [{"message": "ok"}]}
 
     def wait_ready(self, timeout=10.0):
         self.ready_calls.append(timeout)
@@ -63,7 +65,7 @@ class FakeClient:
         return {"m1": "open", "m2": "open", "m3": "open"}
 
     def gcode_store(self, count=50):
-        return {"gcode_store": [{"message": "ok"}]}
+        return self.store
 
 
 def _controller(client=None, audit=None):
@@ -325,3 +327,26 @@ def test_connect_failure_leaves_fault_latched(monkeypatch):
 
     assert controller.faulted is True
     assert controller.fault_reason == "not ready"
+
+
+def test_tmc_dump_latches_on_fault():
+    client = FakeClient()
+    client.store = {"gcode_store": [{"message": "otpw=1"}]}
+    controller = _controller(client)
+
+    with pytest.raises(TmcFaultError, match="otpw"):
+        controller.tmc_dump("m1")
+
+    assert controller.faulted is True
+    assert "otpw" in controller.fault_reason
+
+
+def test_tmc_dump_clean_store_does_not_fault():
+    client = FakeClient()
+    client.store = {"gcode_store": [{"message": "otpw=0"}]}
+    controller = _controller(client)
+
+    result = controller.tmc_dump("m1")
+
+    assert result == client.store
+    assert controller.faulted is False
