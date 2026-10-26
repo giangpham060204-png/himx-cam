@@ -193,3 +193,46 @@ def test_notification_handler_exception_does_not_kill_reader():
     finally:
         transport.close()
         fake.close()
+
+
+def test_supports_notifications_flag():
+    assert WebSocketTransport.supports_notifications is True
+
+
+def test_malformed_id_frame_does_not_kill_reader():
+    transport = WebSocketTransport("http://127.0.0.1:9", timeout=0.5)
+    event = threading.Event()
+    holder: dict = {}
+    with transport._pending_lock:
+        transport._pending[7] = (event, holder)
+    frames = [
+        json.dumps({"jsonrpc": "2.0", "id": "not-an-int", "result": "x"}),
+        json.dumps(
+            {"jsonrpc": "2.0", "id": 7, "result": {"state": "ready"}}
+        ),
+    ]
+
+    class SeqSocket:
+        def __init__(self):
+            self.index = 0
+
+        def recv(self):
+            if self.index < len(frames):
+                raw = frames[self.index]
+                self.index += 1
+                return raw
+            return ""
+
+        def close(self):
+            pass
+
+    sock = SeqSocket()
+    transport._ws = sock
+    transport._closed = False
+    try:
+        transport._read_loop(sock)
+    finally:
+        transport.close()
+
+    assert event.is_set(), "valid response after malformed id was not delivered"
+    assert holder.get("result") == {"state": "ready"}

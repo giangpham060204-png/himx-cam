@@ -162,6 +162,7 @@ class ArmController:
         try:
             self._require_axis(axis_name)
             self._require_not_estopped()
+            self._require_operable()
             current = self.positions[axis_name]
             if current is None or not self.homed[axis_name]:
                 raise NotHomedError(f"axis {axis_name} is not homed")
@@ -218,6 +219,10 @@ class ArmController:
             self.audit.record("estop", config_hash=self.config.config_hash)
 
     def endstops(self) -> dict[str, str]:
+        getter = getattr(self.client, "supports_notifications", None)
+        supports = getter() if callable(getter) else bool(getter)
+        if supports:
+            return self.client.query_endstops_text()
         return self.client.endstop_status()
 
     def restart(self) -> None:
@@ -234,7 +239,8 @@ class ArmController:
 
     _TMC_FAULT_FIELDS = ("otpw", "ot", "s2g", "s2vs", "uv_cp", "drv_err")
     _TMC_FAULT_RE = re.compile(
-        r"\b(" + "|".join(_TMC_FAULT_FIELDS) + r")\s*[=:]\s*1\b"
+        r"\b(" + "|".join(_TMC_FAULT_FIELDS) + r")\s*[=:]\s*1\b",
+        re.IGNORECASE,
     )
 
     def tmc_dump(self, axis_name: str) -> object:
@@ -243,8 +249,20 @@ class ArmController:
         except ArmError as exc:
             self._record_refusal(axis_name, exc)
             raise
-        self.client.run_script(f"DUMP_TMC STEPPER={axis_name}")
-        store = self.client.gcode_store(count=20)
+        command = f"DUMP_TMC STEPPER={axis_name}"
+        try:
+            self.client.run_script(command)
+            store = self.client.gcode_store(count=20)
+        except Exception as exc:
+            self._fault(str(exc))
+            self.audit.record(
+                "error",
+                axis=axis_name,
+                command=command,
+                error=str(exc),
+                config_hash=self.config.config_hash,
+            )
+            raise
         text = json.dumps(store, sort_keys=True)
         faults = sorted(set(self._TMC_FAULT_RE.findall(text)))
         if faults:
@@ -314,6 +332,7 @@ class ArmController:
         self.fault_reason = reason
         self.homed = {name: False for name in AXIS_NAMES}
         self.positions = {name: None for name in AXIS_NAMES}
+        self.m2_total_deg = 0.0
         self.audit.record(
             "fault", reason=reason, config_hash=self.config.config_hash
         )
