@@ -17,7 +17,8 @@ from arm_control.audit import AuditLog  # noqa: E402
 from arm_control.config import load_config  # noqa: E402
 from arm_control.controller import ArmController  # noqa: E402
 from arm_control.errors import ArmError  # noqa: E402
-from arm_control.moonraker import HttpTransport, MoonrakerClient  # noqa: E402
+from arm_control.moonraker import MoonrakerClient  # noqa: E402
+from transport_factory import build_transport  # noqa: E402
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -30,6 +31,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--url", default="http://127.0.0.1:7125")
     parser.add_argument("--timeout", type=float, default=30.0)
     parser.add_argument("--log", type=Path, default=None)
+    parser.add_argument("--transport", choices=["ws", "http"], default="ws")
 
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("status")
@@ -69,6 +71,7 @@ def build_parser() -> argparse.ArgumentParser:
     tmc.add_argument("axis", choices=["m1", "m2", "m3"])
 
     sub.add_parser("estop")
+    sub.add_parser("restart")
     return parser
 
 
@@ -81,7 +84,7 @@ def build_controller(args: argparse.Namespace) -> ArmController:
         / f"arm-{datetime.now(timezone.utc):%Y%m%d}.jsonl"
     )
     audit = AuditLog(log_path)
-    transport = HttpTransport(args.url, timeout=args.timeout)
+    transport = build_transport(args.url, args.transport, args.timeout)
     return ArmController(config, MoonrakerClient(transport), audit)
 
 
@@ -213,6 +216,9 @@ def run(
         print("cycle complete")
     elif args.command == "tmc":
         print(json.dumps(controller.tmc_dump(args.axis), indent=2))
+    elif args.command == "restart":
+        controller.restart()
+        print("restarted")
     else:
         raise ArmError(f"unknown command {args.command!r}")
     return 0

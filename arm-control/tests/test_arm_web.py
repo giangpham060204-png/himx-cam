@@ -26,6 +26,8 @@ class FakeController:
         self.homed = {name: False for name in AXIS_NAMES}
         self.positions = {name: None for name in AXIS_NAMES}
         self.estopped = False
+        self.faulted = False
+        self.fault_reason = ""
         self.calls = []
 
     def connect(self):
@@ -38,6 +40,8 @@ class FakeController:
             "positions": dict(self.positions),
             "tip": None,
             "estopped": self.estopped,
+            "faulted": self.faulted,
+            "fault_reason": self.fault_reason,
             "config_hash": self.config.config_hash,
         }
 
@@ -277,3 +281,15 @@ def test_unknown_path_is_404(web):
 
     assert status == 404
     assert payload["ok"] is False
+
+
+def test_status_reports_fault(web):
+    _, controller, base = web
+    controller.faulted = True
+    controller.fault_reason = "Klipper is 'shutdown', not ready"
+
+    status, payload = _request(base, "/api/status")
+
+    assert status == 200
+    assert payload["status"]["faulted"] is True
+    assert "shutdown" in payload["status"]["fault_reason"]

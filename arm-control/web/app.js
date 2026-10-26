@@ -55,7 +55,10 @@
     state.status = status;
     const led = document.getElementById("link-led");
     const ready = status.connected && status.klippy_state === "ready";
-    const alarm = status.estopped || status.klippy_state === "shutdown";
+    const alarm =
+      status.estopped ||
+      status.faulted ||
+      status.klippy_state === "shutdown";
     led.className = `link-led ${alarm ? "is-alarm" : ready ? "is-ready" : ""}`;
     led.setAttribute(
       "aria-label",

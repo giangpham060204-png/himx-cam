@@ -43,6 +43,9 @@ class FakeController:
     def stop(self):
         self.calls.append(("stop",))
 
+    def restart(self):
+        self.calls.append(("restart",))
+
     def endstops(self):
         return {"m1": "open"}
 
@@ -163,3 +166,12 @@ def test_jog_repeat_with_accel_returns_1_without_motion(capsys):
     assert _run(["jog", "m1", "1", "--repeat", "3", "--accel", "9"], controller) == 1
 
     assert controller.calls == [("connect",)]
+
+
+def test_restart_command(capsys):
+    controller = FakeController()
+    controller.restart = lambda: controller.calls.append(("restart",))
+
+    assert _run(["restart"], controller) == 0
+
+    assert controller.calls == [("connect",), ("restart",)]
