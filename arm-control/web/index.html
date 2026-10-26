@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="arm-token" content="__ARM_TOKEN__">
+  <title>Arm control — HIMX</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header class="masthead">
+    <div class="brand">
+      <span class="eyebrow">HIMX / 3-DOF arm</span>
+      <h1>Arm control</h1>
+      <p class="brand-note">Manual joint positioning over Klipper / Moonraker</p>
+    </div>
+
+    <div class="status-cluster" aria-label="Connection status">
+      <div class="status-item">
+        <span class="label">Link</span>
+        <span id="link-state" class="value value-offline">offline</span>
+      </div>
+      <div class="status-item">
+        <span class="label">Klipper</span>
+        <span id="klipper-state" class="value">—</span>
+      </div>
+      <div class="status-item">
+        <span class="label">Config</span>
+        <span id="config-hash" class="value mono">—</span>
+      </div>
+      <button id="connect" class="button button-quiet" type="button">Connect</button>
+    </div>
+
+    <button id="estop" class="estop" type="button" aria-describedby="estop-note">
+      <span class="estop-mark">STOP</span>
+      <span class="estop-text">Emergency stop</span>
+    </button>
+  </header>
+
+  <p id="banner" class="banner" role="status" hidden></p>
+
+  <main class="console">
+    <section id="axes" class="axes" aria-label="Joint controls"></section>
+
+    <aside class="side">
+      <section class="panel">
+        <h2>Homing</h2>
+        <p class="panel-copy">Home M3, then M2, then M1. M2 needs a known cable state.</p>
+        <div class="button-row">
+          <button class="button button-primary" type="button" data-home="all">Home all</button>
+          <button class="button" type="button" data-home="m1">M1</button>
+          <button class="button" type="button" data-home="m2">M2</button>
+          <button class="button" type="button" data-home="m3">M3</button>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>Tip position</h2>
+        <dl class="data-list">
+          <div><dt>X</dt><dd id="tip-x">—</dd></div>
+          <div><dt>Y</dt><dd id="tip-y">—</dd></div>
+          <div><dt>Z</dt><dd id="tip-z">—</dd></div>
+        </dl>
+        <p id="tip-note" class="panel-copy">All axes must be homed.</p>
+      </section>
+
+      <section class="panel">
+        <h2>Soft limits</h2>
+        <dl id="limit-list" class="data-list"></dl>
+        <p class="panel-copy">The host refuses out-of-range targets. It never clamps.</p>
+      </section>
+
+      <section class="panel panel-note">
+        <h2>Safety</h2>
+        <p class="panel-copy" id="estop-note">The physical e-stop remains the primary stop. This page sends Moonraker's emergency stop.</p>
+        <p class="panel-copy">Motion stays disabled until an axis is homed and the connection is ready.</p>
+        <p class="panel-copy">M2: confirm the cable state or use a slip ring before homing.</p>
+        <p id="last-action" class="last-action">No command sent.</p>
+      </section>
+    </aside>
+  </main>
+
+  <footer class="footer">
+    <span>Arm control / local console</span>
+    <span id="footer-config">config —</span>
+  </footer>
+
+  <noscript>This console needs JavaScript for status and motion controls.</noscript>
+  <script src="/app.js"></script>
+</body>
+</html>
