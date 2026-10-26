@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import re
 import time
 from typing import Iterable
 
@@ -13,9 +15,16 @@ from .errors import (
     MoonrakerError,
     NotHomedError,
     OutOfRangeError,
+    TmcFaultError,
 )
 from .kinematics import JointPose, forward
 from .moonraker import MoonrakerClient
+
+
+_TMC_FAULT_FIELDS = ("otpw", "ot", "s2g", "s2vs", "uv_cp", "drv_err")
+_TMC_FAULT_RE = re.compile(
+    r"\b(" + "|".join(_TMC_FAULT_FIELDS) + r")\s*[=:]\s*1\b"
+)
 
 
 class ArmController:
@@ -190,7 +199,16 @@ class ArmController:
             self._record_refusal(axis_name, exc)
             raise
         self.client.run_script(f"DUMP_TMC STEPPER={axis_name}")
-        return self.client.gcode_store(count=20)
+        store = self.client.gcode_store(count=20)
+        text = json.dumps(store, sort_keys=True)
+        faults = sorted(set(_TMC_FAULT_RE.findall(text)))
+        if faults:
+            reason = (
+                f"TMC {axis_name} fault: {', '.join(faults)}"
+            )
+            self._fault(reason)
+            raise TmcFaultError(reason)
+        return store
 
     def _fault(self, reason: str) -> None:
         self.faulted = True
