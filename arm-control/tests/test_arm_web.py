@@ -258,6 +258,12 @@ def test_index_has_only_up_down_and_estop_controls(web):
     assert 'data-jog-axis="m1"' in html
     assert 'data-jog-axis="m2"' in html
     assert 'data-jog-axis="m3"' in html
+    assert 'aria-label="M1 up"' in html
+    assert 'aria-label="M1 down"' in html
+    assert 'aria-label="M2 left"' in html
+    assert 'aria-label="M2 right"' in html
+    assert 'aria-label="M3 left"' in html
+    assert 'aria-label="M3 right"' in html
     assert 'id="estop"' in html
     assert 'id="home"' not in html
     assert 'id="connect"' not in html
