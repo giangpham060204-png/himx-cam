@@ -14,6 +14,7 @@ from arm_control.errors import (  # noqa: E402
     MoonrakerError,
     NotHomedError,
     OutOfRangeError,
+    TmcFaultError,
 )
 from arm_control.kinematics import JointPose  # noqa: E402
 
@@ -40,6 +41,9 @@ class FakeClient:
         }
         self.fail = fail
         self.calls = []
+        self.ready_calls = []
+        self.notification_handler = None
+        self.store = {"gcode_store": [{"message": "ok"}]}
 
     def klippy_state(self):
         return self.state
@@ -59,7 +63,19 @@ class FakeClient:
         return {"m1": "open", "m2": "open", "m3": "open"}
 
     def gcode_store(self, count=50):
-        return {"gcode_store": [{"message": "ok"}]}
+        return self.store
+
+    def wait_ready(self, timeout=10.0):
+        self.ready_calls.append(timeout)
+
+    def set_notification_handler(self, handler):
+        self.notification_handler = handler
+
+    def notify(self, method, params):
+        self.notification_handler(method, params)
+
+    def firmware_restart(self):
+        self.calls.append(("restart",))
 
 
 def _controller(client=None, audit=None):
@@ -258,3 +274,86 @@ def test_jog_repeat_sleeps_between_moves_only(monkeypatch):
 
     assert controller.positions["m1"] == 3.0
     assert sleeps == [0.1, 0.1]
+
+
+def test_connect_waits_for_ready_and_clears_fault():
+    client = FakeClient()
+    controller = _controller(client)
+    controller.faulted = True
+    controller.fault_reason = "old"
+
+    controller.connect()
+
+    assert client.ready_calls == [10.0]
+    assert controller.faulted is False
+
+
+def test_move_refused_when_not_ready_latches():
+    client = FakeClient(state="shutdown")
+    controller = _controller(client)
+    controller.homed = {"m1": True, "m2": True, "m3": True}
+    controller.positions = {"m1": 0.0, "m2": 0.0, "m3": 0.0}
+
+    with pytest.raises(MoonrakerError, match="shutdown"):
+        controller.move_joint("m1", 1.0)
+
+    assert controller.faulted is True
+    assert client.calls == []
+
+
+def test_move_error_latches_and_refuses_next_move():
+    client = FakeClient(fail=MoonrakerError("boom"))
+    controller = _controller(client)
+    controller.homed = {"m1": True, "m2": True, "m3": True}
+    controller.positions = {"m1": 0.0, "m2": 0.0, "m3": 0.0}
+
+    with pytest.raises(MoonrakerError, match="boom"):
+        controller.move_joint("m1", 1.0)
+
+    assert controller.faulted is True
+    with pytest.raises(ArmError, match="faulted"):
+        controller.move_joint("m1", 2.0)
+    assert len(client.calls) == 1
+
+
+def test_shutdown_notification_latches():
+    client = FakeClient()
+    controller = _controller(client)
+
+    client.notify("notify_klippy_shutdown", [])
+
+    assert controller.faulted is True
+    assert "shutdown" in controller.fault_reason.lower()
+
+
+def test_gcode_response_is_recorded():
+    client = FakeClient()
+    controller = _controller(client)
+
+    client.notify("notify_gcode_response", ["// m1: open"])
+
+    assert controller.last_gcode_response == "// m1: open"
+
+
+def test_tmc_dump_latches_on_fault():
+    client = FakeClient()
+    client.store = {"gcode_store": [{"message": "otpw=1"}]}
+    controller = _controller(client)
+
+    with pytest.raises(TmcFaultError, match="otpw"):
+        controller.tmc_dump("m1")
+
+    assert controller.faulted is True
+
+
+def test_restart_calls_firmware_restart_and_clears_state():
+    client = FakeClient()
+    controller = _controller(client)
+    controller.faulted = True
+    controller.homed = {"m1": True, "m2": True, "m3": True}
+
+    controller.restart()
+
+    assert ("restart",) in client.calls
+    assert controller.faulted is False
+    assert controller.homed == {"m1": False, "m2": False, "m3": False}
