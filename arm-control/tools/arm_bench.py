@@ -22,7 +22,10 @@ from src.commands import manual_move  # noqa: E402
 from src.config import AXIS_NAMES, load_config  # noqa: E402
 from src.controller import ArmController  # noqa: E402
 from src.errors import ArmError, OutOfRangeError  # noqa: E402
-from src.moonraker import HttpTransport, MoonrakerClient  # noqa: E402
+from src.stopflag import StopFlag  # noqa: E402
+from src.moonraker import MoonrakerClient  # noqa: E402
+from run_context import build_context  # noqa: E402
+from transport_factory import build_transport  # noqa: E402
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -35,6 +38,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--url", default="http://127.0.0.1:7125")
     parser.add_argument("--timeout", type=float, default=30.0)
     parser.add_argument("--log", type=Path, default=None)
+    parser.add_argument("--transport", choices=["ws", "http"], default="ws")
+    parser.add_argument("--operator", default="")
+    parser.add_argument("--hardware-serial", default="")
 
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("status")
@@ -56,6 +62,8 @@ def build_parser() -> argparse.ArgumentParser:
     tmc = sub.add_parser("tmc")
     tmc.add_argument("axis", choices=["m1", "m2", "m3"])
 
+    sub.add_parser("stop")
+    sub.add_parser("resume")
     sub.add_parser("estop")
     return parser
 
@@ -68,9 +76,14 @@ def build_controller(args: argparse.Namespace) -> ArmController:
         / "arm"
         / f"bench-{datetime.now(timezone.utc):%Y%m%d}.jsonl"
     )
-    audit = AuditLog(log_path)
-    transport = HttpTransport(args.url, timeout=args.timeout)
-    return ArmController(config, MoonrakerClient(transport), audit)
+    audit = AuditLog(log_path, context=build_context(ROOT, args.operator, args.hardware_serial))
+    transport = build_transport(args.url, args.transport, args.timeout)
+    return ArmController(
+        config,
+        MoonrakerClient(transport),
+        audit,
+        stop_flag=StopFlag(ROOT / "logs" / "arm" / "stop.request"),
+    )
 
 
 def _one_rev(controller: ArmController, axis_name: str) -> None:
@@ -117,6 +130,16 @@ def _limits(config) -> int:
 
 
 def run(args: argparse.Namespace, controller: ArmController) -> int:
+    if args.command == "stop":
+        controller.request_stop()
+        print("controlled stop requested")
+        return 0
+
+    if args.command == "resume":
+        controller.clear_stop()
+        print("controlled stop cleared")
+        return 0
+
     if args.command == "estop":
         controller.stop()
         print("emergency stop sent")

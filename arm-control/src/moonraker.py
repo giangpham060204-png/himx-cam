@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import json
+import re
 import socket
 import time
 import urllib.error
 import urllib.request
-from typing import Any, Protocol
+from collections import deque
+from typing import Any, Callable, Protocol
 
 from .errors import MoonrakerError, MoonrakerTimeout, MoonrakerUnavailable
 
@@ -82,6 +84,70 @@ class HttpTransport:
 class MoonrakerClient:
     def __init__(self, transport: Transport):
         self.transport = transport
+        self._notification_handler: Callable[[str, object], None] | None = None
+        self._gcode_responses: deque[str] = deque(maxlen=200)
+        setter = getattr(transport, "set_notification_handler", None)
+        if setter is not None:
+            setter(self._handle_notification)
+
+    def set_notification_handler(
+        self, handler: Callable[[str, object], None]
+    ) -> None:
+        self._notification_handler = handler
+
+    def _handle_notification(self, method: str, params: object) -> None:
+        if method == "notify_gcode_response":
+            if isinstance(params, (list, tuple)) and params:
+                self._gcode_responses.append(str(params[0]))
+            else:
+                self._gcode_responses.append(str(params))
+        if self._notification_handler is not None:
+            self._notification_handler(method, params)
+
+    def gcode_responses(self) -> list[str]:
+        return list(self._gcode_responses)
+
+    def server_info(self) -> dict[str, Any]:
+        result = self._result(
+            self.transport.request("GET", "/server/info")
+        )
+        if not isinstance(result, dict):
+            raise MoonrakerError(f"unexpected server info: {result!r}")
+        return result
+
+    def firmware_restart(self) -> None:
+        response = self.transport.request(
+            "POST", "/printer/firmware_restart"
+        )
+        if response == "ok" or (
+            isinstance(response, dict) and response.get("result") == "ok"
+        ):
+            return
+        raise MoonrakerError(
+            f"Moonraker refused firmware restart: {response!r}"
+        )
+
+    def supports_notifications(self) -> bool:
+        return bool(getattr(self.transport, "supports_notifications", False))
+
+    def query_endstops_text(self, timeout: float = 2.0) -> dict[str, str]:
+        self._gcode_responses.clear()
+        self.run_script("QUERY_ENDSTOPS")
+        deadline = time.monotonic() + timeout
+        pattern = re.compile(r"^([^:]+):\s*(open|TRIGGERED)$")
+        while time.monotonic() < deadline:
+            result = {}
+            for line in self.gcode_responses():
+                stripped = line.strip()
+                if stripped.startswith("//"):
+                    stripped = stripped[2:].lstrip()
+                match = pattern.match(stripped)
+                if match is not None:
+                    result[match.group(1).strip()] = match.group(2)
+            if result:
+                return result
+            time.sleep(0.05)
+        raise MoonrakerTimeout("no QUERY_ENDSTOPS text response")
 
     def _result(self, payload: object) -> Any:
         if not isinstance(payload, dict):
@@ -140,7 +206,7 @@ class MoonrakerClient:
             return
         raise MoonrakerError(f"Moonraker refused emergency stop: {response!r}")
 
-    def gcode_store(self, count: int = 50) -> object:
+    def gcode_store(self, count: int = 100) -> object:
         return self._result(
             self.transport.request("GET", f"/server/gcode_store?count={count}")
         )

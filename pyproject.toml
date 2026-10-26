@@ -18,7 +18,26 @@ dependencies = [
     "numpy>=1.26",
     "matplotlib>=3.8",
     "pyigtl>=0.3.4",
+    "websocket-client>=1.8",
 ]
 
 [dependency-groups]
-dev = ["pytest>=8"]
+dev = [
+    "pytest>=8",
+    "websockets>=12",
+    "ruff>=0.8",
+    "mypy>=1.11",
+]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
+check_untyped_defs = true
+files = ["arm-control/src", "arm-control/tools"]
