@@ -8,7 +8,7 @@ suite that runs without hardware.
 
 ```text
 arm-control/
-├── arm_control/        Python package (config, kinematics, commands, controller)
+├── src/        Python package (config, kinematics, commands, controller)
 ├── tools/              operator CLI, bench CLI, web console, Klipper simulator harness
 ├── web/                local console HTML/CSS/JS
 ├── tests/              arm-only pytest suite
@@ -38,10 +38,10 @@ Generate the Klipper config:
 ```bash
 PYTHONPATH=arm-control uv run python - <<'PY'
 from pathlib import Path
-from arm_control.config import load_config
-from arm_control.klipper_config import write_printer_config
+from src.config import load_config
+from src.klipper_config import write_printer_config
 
-config = load_config("arm-control/arm_control/config/arm.toml")
+config = load_config("arm-control/src/config/arm.toml")
 write_printer_config(config, Path("printer.cfg"))
 print("wrote printer.cfg")
 PY
@@ -68,7 +68,7 @@ and an emergency-stop button. Home the arm with the CLI/bench first; there is no
 physical e-stop remains the primary stop.
 
 The default Moonraker URL is `http://127.0.0.1:7125`. The default config is
-`arm-control/arm_control/config/arm.toml`; the serial path in it is a
+`arm-control/src/config/arm.toml`; the serial path in it is a
 placeholder until the Pico is flashed.
 
 ## Testing

@@ -14,10 +14,10 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tools"))
 
 import arm_web  # noqa: E402
-from arm_control.config import AXIS_NAMES, load_config  # noqa: E402
-from arm_control.errors import NotHomedError  # noqa: E402
+from src.config import AXIS_NAMES, load_config  # noqa: E402
+from src.errors import NotHomedError  # noqa: E402
 
-CONFIG = load_config(ROOT / "arm_control" / "config" / "arm.toml")
+CONFIG = load_config(ROOT / "src" / "config" / "arm.toml")
 
 
 class FakeController:

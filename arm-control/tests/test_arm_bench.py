@@ -13,9 +13,9 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 class FakeController:
     def __init__(self):
-        from arm_control.config import load_config
+        from src.config import load_config
 
-        self.config = load_config(ROOT / "arm_control" / "config" / "arm.toml")
+        self.config = load_config(ROOT / "src" / "config" / "arm.toml")
         self.homed = {"m1": True, "m2": True, "m3": True}
         self.positions = {"m1": 0.0, "m2": 0.0, "m3": 0.0}
         self.calls = []

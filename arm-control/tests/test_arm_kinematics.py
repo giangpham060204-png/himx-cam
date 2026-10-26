@@ -9,9 +9,9 @@ import pytest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
-from arm_control.config import load_config  # noqa: E402
-from arm_control.errors import OutOfRangeError, UnreachableError  # noqa: E402
-from arm_control.kinematics import (  # noqa: E402
+from src.config import load_config  # noqa: E402
+from src.errors import OutOfRangeError, UnreachableError  # noqa: E402
+from src.kinematics import (  # noqa: E402
     JointPose,
     check_joint_limits,
     forward,
@@ -20,7 +20,7 @@ from arm_control.kinematics import (  # noqa: E402
 )
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-CONFIG = load_config(ROOT / "arm_control" / "config" / "arm.toml")
+CONFIG = load_config(ROOT / "src" / "config" / "arm.toml")
 
 
 def _stack_b():

@@ -7,18 +7,18 @@ import pytest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
-from arm_control.config import load_config  # noqa: E402
-from arm_control.controller import ArmController  # noqa: E402
-from arm_control.errors import (  # noqa: E402
+from src.config import load_config  # noqa: E402
+from src.controller import ArmController  # noqa: E402
+from src.errors import (  # noqa: E402
     ArmError,
     MoonrakerError,
     NotHomedError,
     OutOfRangeError,
 )
-from arm_control.kinematics import JointPose  # noqa: E402
+from src.kinematics import JointPose  # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-CONFIG = load_config(ROOT / "arm_control" / "config" / "arm.toml")
+CONFIG = load_config(ROOT / "src" / "config" / "arm.toml")
 
 
 class RecordingAudit:
@@ -140,7 +140,7 @@ def test_jog_and_jog_repeat(monkeypatch):
     controller = _controller(client)
     controller.home("m1")
     client.calls.clear()
-    monkeypatch.setattr("arm_control.controller.time.sleep", lambda _: None)
+    monkeypatch.setattr("src.controller.time.sleep", lambda _: None)
 
     controller.jog("m1", 1.0)
     controller.jog_repeat("m1", 1.0, repeat=2, interval_s=0.1)
@@ -251,7 +251,7 @@ def test_jog_repeat_sleeps_between_moves_only(monkeypatch):
     client.calls.clear()
     sleeps = []
     monkeypatch.setattr(
-        "arm_control.controller.time.sleep", lambda seconds: sleeps.append(seconds)
+        "src.controller.time.sleep", lambda seconds: sleeps.append(seconds)
     )
 
     controller.jog_repeat("m1", 1.0, repeat=3, interval_s=0.1)
