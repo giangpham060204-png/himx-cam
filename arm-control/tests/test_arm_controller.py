@@ -350,3 +350,46 @@ def test_tmc_dump_clean_store_does_not_fault():
 
     assert result == client.store
     assert controller.faulted is False
+
+
+def test_tmc_dump_detects_uppercase_faults():
+    for message in ("OTPW=1", "DRV_ERR: 1"):
+        client = FakeClient()
+        client.store = {"gcode_store": [{"message": message}]}
+        controller = _controller(client)
+
+        with pytest.raises(TmcFaultError):
+            controller.tmc_dump("m1")
+
+        assert controller.faulted is True
+
+
+def test_tmc_dump_transport_failure_latches_and_audits():
+    audit = RecordingAudit()
+    controller = _controller(FakeClient(fail=MoonrakerError("boom")), audit)
+
+    with pytest.raises(MoonrakerError, match="boom"):
+        controller.tmc_dump("m1")
+
+    assert controller.faulted is True
+    assert "boom" in controller.fault_reason
+    assert any(event == "error" for event, _ in audit.entries)
+    error_entries = [f for e, f in audit.entries if e == "error"]
+    assert error_entries[0]["axis"] == "m1"
+    assert error_entries[0]["command"] == "DUMP_TMC STEPPER=m1"
+    assert "boom" in error_entries[0]["error"]
+    assert error_entries[0]["config_hash"] == CONFIG.config_hash
+
+
+def test_jog_unhomed_while_shutdown_latches_shutdown_not_homed():
+    client = FakeClient(state="shutdown")
+    audit = RecordingAudit()
+    controller = _controller(client, audit)
+    assert controller.homed["m1"] is False
+
+    with pytest.raises(MoonrakerError, match="shutdown"):
+        controller.jog("m1", 1.0)
+
+    assert controller.faulted is True
+    assert "shutdown" in controller.fault_reason
+    assert client.calls == []
