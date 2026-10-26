@@ -121,7 +121,11 @@ def _stack_b_candidates(
 
     ratio = max(-1.0, min(1.0, dz / radius))
     base = math.degrees(math.asin(ratio))
-    branches = {base, 180.0 - base}
+    # Ordered, deduped: the base branch comes first so the
+    # no-current-position return (valid[0]) is deterministic.
+    branches = [base, 180.0 - base]
+    if branches[1] == branches[0]:
+        branches = branches[:1]
     m1 = y - config.m1_y_offset_mm
 
     candidates: list[JointPose] = []
