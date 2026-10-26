@@ -105,6 +105,12 @@ def test_estop_skips_connect(capsys):
     assert controller.calls == [("stop",)]
 
 
+def test_transport_flag_is_accepted():
+    parser = arm_bench.build_parser()
+    args = parser.parse_args(["--transport", "http", "limits"])
+    assert args.transport == "http"
+
+
 def test_limits_returns_1_when_out_of_range_accepted(monkeypatch, capsys):
     import argparse
 
