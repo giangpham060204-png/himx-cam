@@ -21,7 +21,7 @@ the Slicer executable you installed.
 |---|---|
 | Works today | Pixel + depth → 3D point, verified at 0.000 mm against Slicer's Data Probe; Slicer module with pick mode, virtual tip, labelled targets, daily CSV log; live view mapping (window resizes, zoom, monitor changes need nothing) |
 | Tested on | Linux desktop, 3D Slicer 5.12.3, system Python 3.12 (headless) + Slicer's bundled 3.12.10 (module) |
-| Not built yet | Patient-specific field shapes; finger-sized depth control (needs the touch device); robot-arm integration (needs the arm) |
+| Not built yet | Patient-specific field shapes; finger-sized depth control (needs the touch device); robot-arm integration (needs the arm; host layer in `arm-control/`) |
 | Automated evidence | 123 headless tests; in-Slicer smoke suite 15/15; human acceptance run 6/6 |
 
 ---
@@ -605,9 +605,9 @@ minutes depending on the machine). The `timeout` is only a safety net.
    implementations, mesh/labelmap implemented on the Slicer side.
 2. **Finger-sized depth control** — designed only once the touchscreen device
    exists.
-3. **Robot arm** — measure the arm's own frame (`robot_from_cube` matrix),
-   re-check containment before motion, add safety interlocks. Blocked on
-   hardware.
+3. **Robot arm** — host layer in `arm-control/` (mock-tested, no hardware
+   yet). Measure the arm's own frame (`robot_from_cube` matrix), re-check
+   containment before motion, add safety interlocks. Blocked on hardware.
 4. **Touchscreen deployment** — an always-on panel for the operating room.
 
 ---

@@ -16,3 +16,7 @@ docs/
 
 # Generated figures (kept local; not part of the code history)
 images/
+
+# Arm docs and sketches are local reference material, not code
+arm-control/docs/
+arm-control/sketches/
