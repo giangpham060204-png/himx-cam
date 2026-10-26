@@ -133,9 +133,10 @@ class ArmController:
             error = OutOfRangeError("repeat must be >= 1")
             self._record_refusal(axis_name, error)
             raise error
-        for _ in range(repeat):
+        for index in range(repeat):
+            if index:
+                time.sleep(interval_s)
             self.jog(axis_name, delta)
-            time.sleep(interval_s)
 
     def cycle(self, moves: Iterable[tuple[str, float]]) -> None:
         for axis_name, position in moves:
@@ -168,7 +169,11 @@ class ArmController:
         return self.client.endstop_status()
 
     def tmc_dump(self, axis_name: str) -> object:
-        self._require_axis(axis_name)
+        try:
+            self._require_axis(axis_name)
+        except ArmError as exc:
+            self._record_refusal(axis_name, exc)
+            raise
         self.client.run_script(f"DUMP_TMC STEPPER={axis_name}")
         return self.client.gcode_store(count=20)
 
@@ -183,7 +188,7 @@ class ArmController:
     def _run(self, event: str, axis_name: str, command: str) -> None:
         try:
             self.client.run_script(command)
-        except ArmError as exc:
+        except Exception as exc:
             self.audit.record(
                 "error",
                 axis=axis_name,

@@ -96,5 +96,8 @@ def write_printer_config(
             f"{path} already exists; pass force=True to overwrite it"
         )
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(generate_printer_config(config, include_tmc=include_tmc))
+    path.write_text(
+        generate_printer_config(config, include_tmc=include_tmc),
+        encoding="utf-8",
+    )
     return path

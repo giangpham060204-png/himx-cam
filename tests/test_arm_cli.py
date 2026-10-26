@@ -146,3 +146,20 @@ def test_bad_cycle_value_returns_1(capsys):
 
     assert controller.calls == [("connect",)]
     assert "invalid" in capsys.readouterr().err.lower()
+
+
+def test_jog_repeat_with_speed_returns_1_without_motion(capsys):
+    controller = FakeController()
+
+    assert _run(["jog", "m1", "1", "--repeat", "2", "--speed", "5"], controller) == 1
+
+    assert controller.calls == [("connect",)]
+    assert "repeat" in capsys.readouterr().err.lower()
+
+
+def test_jog_repeat_with_accel_returns_1_without_motion(capsys):
+    controller = FakeController()
+
+    assert _run(["jog", "m1", "1", "--repeat", "3", "--accel", "9"], controller) == 1
+
+    assert controller.calls == [("connect",)]

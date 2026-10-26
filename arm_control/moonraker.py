@@ -64,6 +64,10 @@ class HttpTransport:
             raise MoonrakerUnavailable(
                 f"cannot reach Moonraker at {url}: {exc.reason}"
             ) from None
+        except OSError as exc:
+            raise MoonrakerUnavailable(
+                f"cannot reach Moonraker at {url}: {exc}"
+            ) from None
 
         if not payload:
             return None

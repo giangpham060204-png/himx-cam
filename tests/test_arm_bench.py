@@ -103,3 +103,17 @@ def test_estop_skips_connect(capsys):
     assert _run(["estop"], controller) == 0
 
     assert controller.calls == [("stop",)]
+
+
+def test_limits_returns_1_when_out_of_range_accepted(monkeypatch, capsys):
+    import argparse
+
+    import arm_bench
+
+    controller = FakeController()
+    monkeypatch.setattr(arm_bench, "manual_move", lambda *args, **kwargs: None)
+
+    args = argparse.Namespace(command="limits")
+    assert arm_bench.run(args, controller) == 1
+
+    assert "ERROR accepted" in capsys.readouterr().out

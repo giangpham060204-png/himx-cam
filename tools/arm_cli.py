@@ -104,7 +104,7 @@ def _session(controller: ArmController, input_fn=input) -> int:
     while True:
         try:
             line = input_fn("arm> ")
-        except EOFError:
+        except (EOFError, StopIteration):
             break
         words = line.split()
         if not words:
@@ -190,6 +190,11 @@ def run(
         if args.repeat < 1:
             raise ArmError("--repeat must be >= 1")
         if args.repeat > 1:
+            if args.speed is not None or args.accel is not None:
+                raise ArmError(
+                    "--speed/--accel cannot be combined with --repeat > 1; "
+                    "use --repeat 1"
+                )
             controller.jog_repeat(
                 args.axis, args.delta, args.repeat, args.interval
             )
