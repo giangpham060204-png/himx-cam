@@ -237,3 +237,13 @@ def test_supports_notifications_reflects_transport():
             raise AssertionError("unused")
 
     assert MoonrakerClient(WsLike()).supports_notifications() is True
+
+
+def test_gcode_store_defaults_to_spec_count():
+    transport = FakeTransport([{"result": {"gcode_store": []}}])
+    client = MoonrakerClient(transport)
+
+    assert client.gcode_store() == {"gcode_store": []}
+    assert transport.calls == [
+        ("GET", "/server/gcode_store?count=100", None, 5.0)
+    ]

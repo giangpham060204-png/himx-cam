@@ -206,7 +206,7 @@ class MoonrakerClient:
             return
         raise MoonrakerError(f"Moonraker refused emergency stop: {response!r}")
 
-    def gcode_store(self, count: int = 50) -> object:
+    def gcode_store(self, count: int = 100) -> object:
         return self._result(
             self.transport.request("GET", f"/server/gcode_store?count={count}")
         )
