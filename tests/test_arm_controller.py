@@ -220,3 +220,41 @@ def test_connect_resets_host_position():
 
     assert controller.homed == {"m1": False, "m2": False, "m3": False}
     assert controller.positions == {"m1": None, "m2": None, "m3": None}
+
+
+def test_tmc_dump_unknown_axis_records_refusal():
+    audit = RecordingAudit()
+    controller = _controller(audit=audit)
+
+    with pytest.raises(OutOfRangeError, match="m4"):
+        controller.tmc_dump("m4")
+
+    assert any(event == "refuse" for event, _ in audit.entries)
+
+
+def test_run_audits_error_on_unexpected_exception():
+    audit = RecordingAudit()
+    controller = _controller(FakeClient(fail=OSError("boom")), audit)
+    controller.homed = {"m1": True, "m2": True, "m3": True}
+    controller.positions = {"m1": 0.0, "m2": 0.0, "m3": 0.0}
+
+    with pytest.raises(OSError, match="boom"):
+        controller.move_joint("m1", 10.0)
+
+    assert any(event == "error" for event, _ in audit.entries)
+
+
+def test_jog_repeat_sleeps_between_moves_only(monkeypatch):
+    client = FakeClient()
+    controller = _controller(client)
+    controller.home("m1")
+    client.calls.clear()
+    sleeps = []
+    monkeypatch.setattr(
+        "arm_control.controller.time.sleep", lambda seconds: sleeps.append(seconds)
+    )
+
+    controller.jog_repeat("m1", 1.0, repeat=3, interval_s=0.1)
+
+    assert controller.positions["m1"] == 3.0
+    assert sleeps == [0.1, 0.1]

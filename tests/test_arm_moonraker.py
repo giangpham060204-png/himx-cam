@@ -150,3 +150,16 @@ def test_http_transport_reports_unreachable():
 
     with pytest.raises(MoonrakerUnavailable):
         client.klippy_state()
+
+
+def test_http_transport_maps_bare_oserror(monkeypatch):
+    import urllib.request
+
+    def _raise(request, timeout=None):
+        raise OSError("network down")
+
+    monkeypatch.setattr(urllib.request, "urlopen", _raise)
+    client = MoonrakerClient(HttpTransport("http://127.0.0.1:7125", timeout=0.1))
+
+    with pytest.raises(MoonrakerUnavailable):
+        client.klippy_state()

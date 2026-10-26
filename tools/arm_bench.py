@@ -89,7 +89,8 @@ def _one_rev(controller: ArmController, axis_name: str) -> None:
     )
 
 
-def _limits(config) -> None:
+def _limits(config) -> int:
+    failures = 0
     for name in AXIS_NAMES:
         axis = config.axes[name]
         for label, value in (
@@ -104,12 +105,15 @@ def _limits(config) -> None:
             print(f"{name} below min: refused")
         else:
             print(f"{name} below min: ERROR accepted")
+            failures += 1
         try:
             manual_move(config, name, axis.max_pos + 1.0)
         except OutOfRangeError:
             print(f"{name} above max: refused")
         else:
             print(f"{name} above max: ERROR accepted")
+            failures += 1
+    return failures
 
 
 def run(args: argparse.Namespace, controller: ArmController) -> int:
@@ -119,8 +123,8 @@ def run(args: argparse.Namespace, controller: ArmController) -> int:
         return 0
 
     if args.command == "limits":
-        _limits(controller.config)
-        return 0
+        failures = _limits(controller.config)
+        return 1 if failures else 0
 
     controller.connect()
 
