@@ -30,3 +30,13 @@ def test_audit_writes_one_json_line_per_event(tmp_path):
 
 def test_null_audit_accepts_anything():
     NullAudit().record("anything", axis="m1")
+
+
+def test_audit_context_is_written(tmp_path):
+    log = AuditLog(tmp_path / "arm.jsonl", context={"commit": "abc123"})
+    log.record("move", axis="m1")
+    log.close()
+
+    entry = json.loads((tmp_path / "arm.jsonl").read_text().splitlines()[0])
+    assert entry["commit"] == "abc123"
+    assert entry["axis"] == "m1"
