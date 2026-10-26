@@ -10,12 +10,12 @@ import pytest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
-from arm_control.errors import (  # noqa: E402
+from src.errors import (  # noqa: E402
     MoonrakerError,
     MoonrakerTimeout,
     MoonrakerUnavailable,
 )
-from arm_control.moonraker import (  # noqa: E402
+from src.moonraker import (  # noqa: E402
     HttpTransport,
     MoonrakerClient,
 )

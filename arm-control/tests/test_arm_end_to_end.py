@@ -8,9 +8,9 @@ import pytest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
-from arm_control.config import load_config  # noqa: E402
-from arm_control.controller import ArmController  # noqa: E402
-from arm_control.moonraker import MoonrakerClient  # noqa: E402
+from src.config import load_config  # noqa: E402
+from src.controller import ArmController  # noqa: E402
+from src.moonraker import MoonrakerClient  # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
@@ -52,7 +52,7 @@ class RecordingAudit:
 
 
 def test_full_mock_session():
-    config = load_config(ROOT / "arm_control" / "config" / "arm.toml")
+    config = load_config(ROOT / "src" / "config" / "arm.toml")
     transport = FakeTransport()
     audit = RecordingAudit()
     controller = ArmController(config, MoonrakerClient(transport), audit)

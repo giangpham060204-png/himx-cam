@@ -8,17 +8,17 @@ import pytest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
-from arm_control.commands import (  # noqa: E402
+from src.commands import (  # noqa: E402
     format_number,
     manual_home,
     manual_move,
     set_position,
 )
-from arm_control.config import load_config  # noqa: E402
-from arm_control.errors import OutOfRangeError  # noqa: E402
+from src.config import load_config  # noqa: E402
+from src.errors import OutOfRangeError  # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-CONFIG = load_config(ROOT / "arm_control" / "config" / "arm.toml")
+CONFIG = load_config(ROOT / "src" / "config" / "arm.toml")
 
 
 def test_manual_move_uses_default_speed_and_accel():

@@ -7,7 +7,7 @@ from datetime import datetime
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
-from arm_control.audit import AuditLog, NullAudit  # noqa: E402
+from src.audit import AuditLog, NullAudit  # noqa: E402
 
 
 def test_audit_writes_one_json_line_per_event(tmp_path):

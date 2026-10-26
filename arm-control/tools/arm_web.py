@@ -24,11 +24,11 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from arm_control.audit import AuditLog  # noqa: E402
-from arm_control.config import AXIS_NAMES, LINEAR, RobotConfig, load_config  # noqa: E402
-from arm_control.controller import ArmController  # noqa: E402
-from arm_control.errors import ArmError  # noqa: E402
-from arm_control.moonraker import HttpTransport, MoonrakerClient  # noqa: E402
+from src.audit import AuditLog  # noqa: E402
+from src.config import AXIS_NAMES, LINEAR, RobotConfig, load_config  # noqa: E402
+from src.controller import ArmController  # noqa: E402
+from src.errors import ArmError  # noqa: E402
+from src.moonraker import HttpTransport, MoonrakerClient  # noqa: E402
 
 WEB_DIR = ROOT / "web"
 STATIC_FILES = {
@@ -362,7 +362,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--config",
         type=Path,
-        default=ROOT / "arm_control" / "config" / "arm.toml",
+        default=ROOT / "src" / "config" / "arm.toml",
     )
     parser.add_argument("--url", default="http://127.0.0.1:7125")
     parser.add_argument("--timeout", type=float, default=30.0)

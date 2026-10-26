@@ -14,8 +14,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from arm_control.config import load_config  # noqa: E402
-from arm_control.klipper_config import generate_printer_config  # noqa: E402
+from src.config import load_config  # noqa: E402
+from src.klipper_config import generate_printer_config  # noqa: E402
 
 TEST_GCODE = """\
 MANUAL_STEPPER STEPPER=m1 SET_POSITION=0
@@ -37,7 +37,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--config",
         type=Path,
-        default=ROOT / "arm_control" / "config" / "arm.toml",
+        default=ROOT / "src" / "config" / "arm.toml",
     )
     return parser
 

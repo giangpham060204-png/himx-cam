@@ -7,11 +7,11 @@ import pytest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
-from arm_control.config import load_config  # noqa: E402
-from arm_control.errors import ConfigError  # noqa: E402
+from src.config import load_config  # noqa: E402
+from src.errors import ConfigError  # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-DEFAULT = ROOT / "arm_control" / "config" / "arm.toml"
+DEFAULT = ROOT / "src" / "config" / "arm.toml"
 
 
 def _write(tmp_path, text):
