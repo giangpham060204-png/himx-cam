@@ -94,6 +94,8 @@ class WebState:
                 "connected": self.connected,
                 "klippy_state": "offline" if not self.connected else "unknown",
                 "estopped": self.controller.estopped,
+                "faulted": getattr(self.controller, "faulted", False),
+                "fault_reason": getattr(self.controller, "fault_reason", ""),
                 "homed": dict(self.controller.homed),
                 "positions": dict(self.controller.positions),
                 "tip": None,
