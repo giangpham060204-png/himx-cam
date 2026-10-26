@@ -48,6 +48,12 @@ class FakeController:
     def stop(self):
         self.calls.append(("stop",))
 
+    def request_stop(self):
+        self.calls.append(("request_stop",))
+
+    def clear_stop(self):
+        self.calls.append(("clear_stop",))
+
 
 def _run(argv, controller):
     return arm_bench.main(argv, controller_factory=lambda args: controller)
@@ -103,6 +109,21 @@ def test_estop_skips_connect(capsys):
     assert _run(["estop"], controller) == 0
 
     assert controller.calls == [("stop",)]
+
+
+def test_stop_and_resume_skip_connect(capsys):
+    controller = FakeController()
+
+    assert _run(["stop"], controller) == 0
+    assert _run(["resume"], controller) == 0
+
+    assert controller.calls == [("request_stop",), ("clear_stop",)]
+
+
+def test_transport_flag_is_accepted():
+    parser = arm_bench.build_parser()
+    args = parser.parse_args(["--transport", "http", "limits"])
+    assert args.transport == "http"
 
 
 def test_limits_returns_1_when_out_of_range_accepted(monkeypatch, capsys):

@@ -28,7 +28,10 @@ from src.audit import AuditLog  # noqa: E402
 from src.config import AXIS_NAMES, LINEAR, RobotConfig, load_config  # noqa: E402
 from src.controller import ArmController  # noqa: E402
 from src.errors import ArmError  # noqa: E402
-from src.moonraker import HttpTransport, MoonrakerClient  # noqa: E402
+from src.stopflag import StopFlag  # noqa: E402
+from src.moonraker import MoonrakerClient  # noqa: E402
+from run_context import build_context  # noqa: E402
+from transport_factory import build_transport  # noqa: E402
 
 WEB_DIR = ROOT / "web"
 STATIC_FILES = {
@@ -73,7 +76,7 @@ class WebState:
         self.last_error = ""
 
     def _axis_meta(self, config: RobotConfig) -> dict[str, dict[str, object]]:
-        result = {}
+        result: dict[str, dict[str, object]] = {}
         for name in AXIS_NAMES:
             axis = config.axes[name]
             result[name] = {
@@ -94,6 +97,11 @@ class WebState:
                 "connected": self.connected,
                 "klippy_state": "offline" if not self.connected else "unknown",
                 "estopped": self.controller.estopped,
+                "faulted": getattr(self.controller, "faulted", False),
+                "fault_reason": getattr(self.controller, "fault_reason", ""),
+                "stop_requested": getattr(
+                    self.controller, "stop_requested", False
+                ),
                 "homed": dict(self.controller.homed),
                 "positions": dict(self.controller.positions),
                 "tip": None,
@@ -367,6 +375,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--url", default="http://127.0.0.1:7125")
     parser.add_argument("--timeout", type=float, default=30.0)
     parser.add_argument("--log", type=Path, default=None)
+    parser.add_argument("--transport", choices=["ws", "http"], default="ws")
+    parser.add_argument("--operator", default="")
+    parser.add_argument("--hardware-serial", default="")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument(
@@ -385,9 +396,14 @@ def build_controller(args: argparse.Namespace) -> ArmController:
         / "arm"
         / f"web-{datetime.now(timezone.utc):%Y%m%d}.jsonl"
     )
-    audit = AuditLog(log_path)
-    transport = HttpTransport(args.url, timeout=args.timeout)
-    return ArmController(config, MoonrakerClient(transport), audit)
+    audit = AuditLog(log_path, context=build_context(ROOT, args.operator, args.hardware_serial))
+    transport = build_transport(args.url, args.transport, args.timeout)
+    return ArmController(
+        config,
+        MoonrakerClient(transport),
+        audit,
+        stop_flag=StopFlag(ROOT / "logs" / "arm" / "stop.request"),
+    )
 
 
 def main(

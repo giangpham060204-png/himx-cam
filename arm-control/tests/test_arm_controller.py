@@ -9,13 +9,14 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 from src.config import load_config  # noqa: E402
 from src.controller import ArmController  # noqa: E402
+from src.stopflag import StopFlag  # noqa: E402
 from src.errors import (  # noqa: E402
     ArmError,
     MoonrakerError,
     NotHomedError,
     OutOfRangeError,
+    TmcFaultError,
 )
-from src.kinematics import JointPose  # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 CONFIG = load_config(ROOT / "src" / "config" / "arm.toml")
@@ -30,7 +31,8 @@ class RecordingAudit:
 
 
 class FakeClient:
-    def __init__(self, state="ready", objects=None, fail=None):
+    def __init__(self, state="ready", objects=None, fail=None,
+                 supports_notifications=False):
         self.state = state
         self._objects = objects or {
             "manual_stepper m1",
@@ -40,6 +42,12 @@ class FakeClient:
         }
         self.fail = fail
         self.calls = []
+        self.on_run = None
+        self.ready_calls = []
+        self.notification_handler = None
+        self.store = {"gcode_store": [{"message": "ok"}]}
+        self._supports_notifications = supports_notifications
+        self.text_response: dict[str, str] | None = None
 
     def klippy_state(self):
         return self.state
@@ -49,6 +57,8 @@ class FakeClient:
 
     def run_script(self, script, timeout=120.0):
         self.calls.append(("run", script))
+        if self.on_run is not None:
+            self.on_run(script)
         if self.fail is not None:
             raise self.fail
 
@@ -58,8 +68,29 @@ class FakeClient:
     def endstop_status(self):
         return {"m1": "open", "m2": "open", "m3": "open"}
 
+    def supports_notifications(self):
+        return self._supports_notifications
+
+    def query_endstops_text(self, timeout=2.0):
+        self.calls.append(("query_endstops_text",))
+        if self.text_response is not None:
+            return self.text_response
+        return {"m1": "open", "m2": "TRIGGERED", "m3": "open"}
+
     def gcode_store(self, count=50):
-        return {"gcode_store": [{"message": "ok"}]}
+        return self.store
+
+    def wait_ready(self, timeout=10.0):
+        self.ready_calls.append(timeout)
+
+    def set_notification_handler(self, handler):
+        self.notification_handler = handler
+
+    def notify(self, method, params):
+        self.notification_handler(method, params)
+
+    def firmware_restart(self):
+        self.calls.append(("restart",))
 
 
 def _controller(client=None, audit=None):
@@ -258,3 +289,270 @@ def test_jog_repeat_sleeps_between_moves_only(monkeypatch):
 
     assert controller.positions["m1"] == 3.0
     assert sleeps == [0.1, 0.1]
+
+
+def test_connect_waits_for_ready_and_clears_fault():
+    client = FakeClient()
+    controller = _controller(client)
+    controller.faulted = True
+    controller.fault_reason = "old"
+
+    controller.connect()
+
+    assert client.ready_calls == [10.0]
+    assert controller.faulted is False
+
+
+def test_move_refused_when_not_ready_latches():
+    client = FakeClient(state="shutdown")
+    controller = _controller(client)
+    controller.homed = {"m1": True, "m2": True, "m3": True}
+    controller.positions = {"m1": 0.0, "m2": 0.0, "m3": 0.0}
+
+    with pytest.raises(MoonrakerError, match="shutdown"):
+        controller.move_joint("m1", 1.0)
+
+    assert controller.faulted is True
+    assert client.calls == []
+
+
+def test_move_error_latches_and_refuses_next_move():
+    client = FakeClient(fail=MoonrakerError("boom"))
+    controller = _controller(client)
+    controller.homed = {"m1": True, "m2": True, "m3": True}
+    controller.positions = {"m1": 0.0, "m2": 0.0, "m3": 0.0}
+
+    with pytest.raises(MoonrakerError, match="boom"):
+        controller.move_joint("m1", 1.0)
+
+    assert controller.faulted is True
+    with pytest.raises(ArmError, match="faulted"):
+        controller.move_joint("m1", 2.0)
+    assert len(client.calls) == 1
+
+
+def test_shutdown_notification_latches():
+    client = FakeClient()
+    controller = _controller(client)
+
+    client.notify("notify_klippy_shutdown", [])
+
+    assert controller.faulted is True
+    assert "shutdown" in controller.fault_reason.lower()
+
+
+def test_gcode_response_is_recorded():
+    client = FakeClient()
+    controller = _controller(client)
+
+    client.notify("notify_gcode_response", ["// m1: open"])
+
+    assert controller.last_gcode_response == "// m1: open"
+
+
+def test_tmc_dump_latches_on_fault():
+    client = FakeClient()
+    client.store = {"gcode_store": [{"message": "otpw=1"}]}
+    controller = _controller(client)
+
+    with pytest.raises(TmcFaultError, match="otpw"):
+        controller.tmc_dump("m1")
+
+    assert controller.faulted is True
+
+
+def test_restart_calls_firmware_restart_and_clears_state():
+    client = FakeClient()
+    controller = _controller(client)
+    controller.faulted = True
+    controller.homed = {"m1": True, "m2": True, "m3": True}
+
+    controller.restart()
+
+    assert ("restart",) in client.calls
+    assert controller.faulted is False
+    assert controller.homed == {"m1": False, "m2": False, "m3": False}
+
+
+def test_m2_total_rotation_tracks_from_home():
+    client = FakeClient()
+    controller = _controller(client)
+    controller.home("m2")
+    controller.move_joint("m2", 30.0)
+    controller.move_joint("m2", -20.0)
+
+    assert controller.m2_total_deg == pytest.approx(-20.0)
+    assert controller.status()["m2_total_deg"] == pytest.approx(-20.0)
+
+
+def test_m2_total_refuses_beyond_cable_wind():
+    import dataclasses
+
+    m2 = dataclasses.replace(CONFIG.axes["m2"], home_position=180.0)
+    config = dataclasses.replace(
+        CONFIG, axes={**CONFIG.axes, "m2": m2}
+    )
+    client = FakeClient()
+    controller = ArmController(config, client, RecordingAudit())
+    controller.home("m2")
+    controller.move_joint("m2", 360.0)
+    controller.move_joint("m2", 0.0)
+
+    with pytest.raises(OutOfRangeError, match="cable"):
+        controller.move_joint("m2", -360.0)
+
+
+def test_jog_on_faulted_controller_reports_fault():
+    client = FakeClient()
+    audit = RecordingAudit()
+    controller = _controller(client, audit)
+    controller.home("m1")
+    controller._fault("driver overtemp")
+    client.calls.clear()
+
+    with pytest.raises(ArmError, match="faulted"):
+        controller.jog("m1", 1.0)
+
+    assert client.calls == []
+    assert any(event == "refuse" for event, _ in audit.entries)
+
+
+def test_tmc_dump_run_failure_latches_fault_and_audits_error():
+    audit = RecordingAudit()
+    controller = _controller(
+        FakeClient(fail=MoonrakerError("boom")), audit
+    )
+
+    with pytest.raises(MoonrakerError, match="boom"):
+        controller.tmc_dump("m1")
+
+    assert controller.faulted is True
+    errors = [fields for event, fields in audit.entries if event == "error"]
+    assert errors
+    assert errors[0]["axis"] == "m1"
+    assert "DUMP_TMC" in errors[0]["command"]
+    assert "boom" in errors[0]["error"]
+    assert errors[0]["config_hash"] == CONFIG.config_hash
+
+
+def test_tmc_dump_detects_uppercase_fault_field():
+    client = FakeClient()
+    client.store = {"gcode_store": [{"message": "DRV_ERR=1 OTPW=1"}]}
+    controller = _controller(client)
+
+    with pytest.raises(TmcFaultError, match="DRV_ERR|OTPW"):
+        controller.tmc_dump("m1")
+
+    assert controller.faulted is True
+
+
+def test_endstops_uses_text_when_notifications_supported():
+    client = FakeClient(supports_notifications=True)
+    controller = _controller(client)
+
+    result = controller.endstops()
+
+    assert result == {"m1": "open", "m2": "TRIGGERED", "m3": "open"}
+    assert ("query_endstops_text",) in client.calls
+
+
+def test_endstops_uses_http_status_without_notifications():
+    client = FakeClient(supports_notifications=False)
+    controller = _controller(client)
+
+    assert controller.endstops() == {"m1": "open", "m2": "open", "m3": "open"}
+    assert ("query_endstops_text",) not in client.calls
+
+
+def test_fault_resets_m2_total_deg():
+    client = FakeClient()
+    controller = _controller(client)
+    controller.home("m2")
+    controller.move_joint("m2", 30.0)
+    assert controller.m2_total_deg == pytest.approx(30.0)
+
+    controller._fault("boom")
+
+    assert controller.m2_total_deg == 0.0
+
+
+def test_request_stop_refuses_next_move_without_emergency(tmp_path):
+    flag = StopFlag(tmp_path / "stop.request")
+    client = FakeClient()
+    controller = ArmController(
+        CONFIG, client, RecordingAudit(), stop_flag=flag
+    )
+    controller.connect()
+    controller.home("m1")
+    client.calls.clear()
+
+    controller.request_stop()
+
+    assert flag.requested() is True
+    assert controller.status()["stop_requested"] is True
+    with pytest.raises(ArmError, match="controlled stop"):
+        controller.move_joint("m1", 1.0)
+    assert client.calls == []
+    assert not any(call[0] == "estop" for call in client.calls)
+    assert any(event == "stop" for event, _ in controller.audit.entries)
+
+
+def test_clear_stop_allows_next_move(tmp_path):
+    flag = StopFlag(tmp_path / "stop.request")
+    client = FakeClient()
+    controller = ArmController(
+        CONFIG, client, RecordingAudit(), stop_flag=flag
+    )
+    controller.connect()
+    controller.home("m1")
+    client.calls.clear()
+
+    controller.request_stop()
+    controller.clear_stop()
+    controller.move_joint("m1", 1.0)
+
+    assert flag.requested() is False
+    assert client.calls[0][0] == "run"
+    assert any(event == "resume" for event, _ in controller.audit.entries)
+
+
+def test_external_stop_flag_is_seen_by_another_controller(tmp_path):
+    flag_path = tmp_path / "stop.request"
+    first = StopFlag(flag_path)
+    second = StopFlag(flag_path)
+    client = FakeClient()
+    controller = ArmController(
+        CONFIG, client, RecordingAudit(), stop_flag=second
+    )
+    controller.connect()
+    controller.home("m1")
+    client.calls.clear()
+
+    first.request()
+
+    with pytest.raises(ArmError, match="controlled stop"):
+        controller.move_joint("m1", 1.0)
+    assert client.calls == []
+
+
+def test_cycle_stops_after_current_move(tmp_path):
+    flag = StopFlag(tmp_path / "stop.request")
+    client = FakeClient()
+    controller = ArmController(
+        CONFIG, client, RecordingAudit(), stop_flag=flag
+    )
+    controller.connect()
+    controller.home("m1")
+    client.calls.clear()
+
+    def stop_after_first(script):
+        if not flag.requested():
+            controller.request_stop()
+
+    client.on_run = stop_after_first
+    with pytest.raises(ArmError, match="controlled stop"):
+        controller.cycle([("m1", 1.0), ("m1", 2.0)])
+
+    runs = [call for call in client.calls if call[0] == "run"]
+    assert len(runs) == 1
+    assert "MOVE=1" in runs[0][1]
