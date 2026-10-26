@@ -9,7 +9,8 @@ suite that runs without hardware.
 ```text
 arm-control/
 ├── arm_control/        Python package (config, kinematics, commands, controller)
-├── tools/              operator CLI, bench CLI, Klipper simulator harness
+├── tools/              operator CLI, bench CLI, web console, Klipper simulator harness
+├── web/                local console HTML/CSS/JS
 ├── tests/              arm-only pytest suite
 ├── docs/               specs, design, test guide, bench checklist (local)
 └── sketches/           arm/RCM sketches (local)
@@ -52,6 +53,17 @@ Run the operator CLI or bench CLI:
 uv run python arm-control/tools/arm_cli.py --help
 uv run python arm-control/tools/arm_bench.py --help
 ```
+
+Run the local web console:
+
+```bash
+uv run python arm-control/tools/arm_web.py --open
+# or open http://127.0.0.1:8765/
+```
+
+The web console binds to `127.0.0.1` by default, uses a per-run token, and
+sends every motion through the same `ArmController` safety layer as the CLI.
+The physical e-stop remains the primary stop.
 
 The default Moonraker URL is `http://127.0.0.1:7125`. The default config is
 `arm-control/arm_control/config/arm.toml`; the serial path in it is a
