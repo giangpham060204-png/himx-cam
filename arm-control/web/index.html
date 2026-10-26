@@ -4,88 +4,52 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="arm-token" content="__ARM_TOKEN__">
-  <title>Arm control — HIMX</title>
+  <title>Arm control</title>
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-  <header class="masthead">
-    <div class="brand">
-      <span class="eyebrow">HIMX / 3-DOF arm</span>
-      <h1>Arm control</h1>
-      <p class="brand-note">Manual joint positioning over Klipper / Moonraker</p>
-    </div>
+  <main class="stage">
+    <span id="link-led" class="link-led" role="status" aria-label="Connection offline"></span>
 
-    <div class="status-cluster" aria-label="Connection status">
-      <div class="status-item">
-        <span class="label">Link</span>
-        <span id="link-state" class="value value-offline">offline</span>
-      </div>
-      <div class="status-item">
-        <span class="label">Klipper</span>
-        <span id="klipper-state" class="value">—</span>
-      </div>
-      <div class="status-item">
-        <span class="label">Config</span>
-        <span id="config-hash" class="value mono">—</span>
-      </div>
-      <button id="connect" class="button button-quiet" type="button">Connect</button>
-    </div>
+    <section class="controller" id="controller" aria-label="Arm controller">
+      <button id="home" class="utility home" type="button" aria-label="Home all axes" title="Home all">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M4 11.2 12 4l8 7.2v8.3a1.5 1.5 0 0 1-1.5 1.5h-4.2v-5.5H9.7V21H5.5A1.5 1.5 0 0 1 4 19.5z"/>
+        </svg>
+      </button>
 
-    <button id="estop" class="estop" type="button" aria-describedby="estop-note">
-      <span class="estop-mark">STOP</span>
-      <span class="estop-text">Emergency stop</span>
-    </button>
-  </header>
+      <button id="connect" class="utility connect" type="button" aria-label="Connect to Moonraker" title="Connect">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12 3v8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          <path d="M7.3 6.2a8 8 0 1 0 9.4 0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>
+      </button>
 
-  <p id="banner" class="banner" role="status" hidden></p>
+      <button id="estop" class="estop" type="button" aria-label="Emergency stop" title="Emergency stop">
+        <span class="stop-mark"></span>
+      </button>
 
-  <main class="console">
-    <section id="axes" class="axes" aria-label="Joint controls"></section>
-
-    <aside class="side">
-      <section class="panel">
-        <h2>Homing</h2>
-        <p class="panel-copy">Home M3, then M2, then M1. M2 needs a known cable state.</p>
-        <div class="button-row">
-          <button class="button button-primary" type="button" data-home="all">Home all</button>
-          <button class="button" type="button" data-home="m1">M1</button>
-          <button class="button" type="button" data-home="m2">M2</button>
-          <button class="button" type="button" data-home="m3">M3</button>
+      <div class="stick-slot left">
+        <span class="axis-tag tag-x">M1 <b id="m1-value">—</b></span>
+        <span class="axis-tag tag-y">M3 <b id="m3-value">—</b></span>
+        <div class="stick" data-stick="left" tabindex="0" role="application" aria-label="M1 horizontal, M3 vertical analog jog">
+          <span class="stick-ring"></span>
+          <span class="stick-knob"></span>
         </div>
-      </section>
+      </div>
 
-      <section class="panel">
-        <h2>Tip position</h2>
-        <dl class="data-list">
-          <div><dt>X</dt><dd id="tip-x">—</dd></div>
-          <div><dt>Y</dt><dd id="tip-y">—</dd></div>
-          <div><dt>Z</dt><dd id="tip-z">—</dd></div>
-        </dl>
-        <p id="tip-note" class="panel-copy">All axes must be homed.</p>
-      </section>
+      <div class="stick-slot right">
+        <span class="axis-tag tag-y">M2 <b id="m2-value">—</b><i>°</i></span>
+        <div class="stick" data-stick="right" tabindex="0" role="application" aria-label="M2 vertical analog jog">
+          <span class="stick-ring"></span>
+          <span class="stick-knob"></span>
+        </div>
+      </div>
+    </section>
 
-      <section class="panel">
-        <h2>Soft limits</h2>
-        <dl id="limit-list" class="data-list"></dl>
-        <p class="panel-copy">The host refuses out-of-range targets. It never clamps.</p>
-      </section>
-
-      <section class="panel panel-note">
-        <h2>Safety</h2>
-        <p class="panel-copy" id="estop-note">The physical e-stop remains the primary stop. This page sends Moonraker's emergency stop.</p>
-        <p class="panel-copy">Motion stays disabled until an axis is homed and the connection is ready.</p>
-        <p class="panel-copy">M2: confirm the cable state or use a slip ring before homing.</p>
-        <p id="last-action" class="last-action">No command sent.</p>
-      </section>
-    </aside>
+    <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
   </main>
 
-  <footer class="footer">
-    <span>Arm control / local console</span>
-    <span id="footer-config">config —</span>
-  </footer>
-
-  <noscript>This console needs JavaScript for status and motion controls.</noscript>
   <script src="/app.js"></script>
 </body>
 </html>

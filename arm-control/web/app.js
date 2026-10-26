@@ -2,61 +2,24 @@
   "use strict";
 
   const token = document.querySelector('meta[name="arm-token"]').content;
-  const AXES = ["m1", "m2", "m3"];
   const $ = (id) => document.getElementById(id);
   const state = {
     status: null,
-    builtFor: null,
-    busy: false,
     polling: false,
-    refreshTimer: null,
-    actionError: "",
+    timer: null,
+    toastTimer: null,
+    lastError: "",
   };
 
-  function unit(axis) {
-    return axis.kind === "rotary" ? "deg" : "mm";
-  }
-
-  function number(value, axis) {
-    if (value === null || value === undefined || Number.isNaN(Number(value))) {
-      return "—";
-    }
-    const digits = axis.kind === "rotary" ? 1 : 2;
-    return Number(Number(value).toFixed(digits)).toString();
-  }
-
-  function percent(value, axis) {
-    const span = axis.max - axis.min;
-    if (!span || value === null || value === undefined) return null;
-    return Math.max(0, Math.min(100, ((value - axis.min) / span) * 100));
-  }
-
-  function setBanner(message) {
-    const banner = $("banner");
-    banner.textContent = message || "";
-    banner.hidden = !message;
-  }
-
-  function setBusy(busy) {
-    state.busy = busy;
-    document.querySelectorAll("button:not(#estop)").forEach((button) => {
-      button.disabled = busy;
-    });
-    document.querySelectorAll("input").forEach((input) => {
-      input.disabled = busy;
-    });
-    if (!busy && state.status) {
-      applyDisabledState(state.status);
-    }
-  }
-
   async function api(path, options = {}) {
-    const headers = {
-      "Content-Type": "application/json",
-      "X-Arm-Token": token,
-      ...(options.headers || {}),
-    };
-    const response = await fetch(path, { ...options, headers });
+    const response = await fetch(path, {
+      ...options,
+      headers: {
+        "Content-Type": "application/json",
+        "X-Arm-Token": token,
+        ...(options.headers || {}),
+      },
+    });
     let payload = null;
     try {
       payload = await response.json();
@@ -69,165 +32,207 @@
     return payload;
   }
 
-  function buildAxes(status) {
-    const axes = $("axes");
-    axes.innerHTML = AXES.map((name, index) => {
-      const axis = status.axes[name];
-      const suffix = unit(axis);
-      const steps = axis.kind === "rotary" ? [10, 5, 1] : [10, 1, 0.1];
-      const minus = steps
-        .map(
-          (step) =>
-            `<button type="button" data-jog-axis="${name}" data-delta="${-step}" aria-label="Jog ${name} minus ${step} ${suffix}">−${step}</button>`
-        )
-        .join("");
-      const plus = [...steps]
-        .reverse()
-        .map(
-          (step) =>
-            `<button type="button" data-jog-axis="${name}" data-delta="${step}" aria-label="Jog ${name} plus ${step} ${suffix}">+${step}</button>`
-        )
-        .join("");
-      return `
-        <article class="axis" data-axis="${name}">
-          <header class="axis-head">
-            <div class="axis-id">
-              <span class="index">${String(index + 1).padStart(2, "0")}</span>
-              <h2>${name.toUpperCase()}</h2>
-              <span class="axis-kind">${axis.kind}</span>
-            </div>
-            <div class="axis-readout">
-              <span class="position" data-position="${name}">—</span>
-              <span class="unit">${suffix}</span>
-            </div>
-          </header>
-          <div class="travel">
-            <div class="travel-labels">
-              <span data-min="${name}">${number(axis.min, axis)}</span>
-              <span>soft travel</span>
-              <span data-max="${name}">${number(axis.max, axis)}</span>
-            </div>
-            <div class="rail" role="img" aria-label="${name} travel">
-              <span class="rail-home" data-home-marker="${name}" title="Home position"></span>
-              <span class="rail-marker" data-marker="${name}"></span>
-            </div>
-          </div>
-          <div class="axis-controls">
-            <div class="jog-group" role="group" aria-label="Jog ${name}">${minus}${plus}</div>
-            <form class="move-form" data-move-axis="${name}">
-              <label>
-                Move to
-                <input name="position" type="number" step="any" min="${axis.min}" max="${axis.max}" inputmode="decimal" placeholder="${number(axis.home, axis)}">
-              </label>
-              <button type="submit">Move</button>
-            </form>
-            <div class="axis-state">
-              <span class="tag tag-unhomed" data-homed="${name}">unhomed</span>
-              <span class="limit" data-limit="${name}"></span>
-            </div>
-          </div>
-        </article>`;
-    }).join("");
-
-    $("limit-list").innerHTML = AXES.map((name) => {
-      const axis = status.axes[name];
-      return `<div><dt>${name.toUpperCase()}</dt><dd>${number(axis.min, axis)} .. ${number(axis.max, axis)} ${unit(axis)}</dd></div>`;
-    }).join("");
-
-    AXES.forEach((name) => {
-      const axis = status.axes[name];
-      const home = percent(axis.home, axis);
-      const marker = document.querySelector(`[data-home-marker="${name}"]`);
-      if (home !== null) marker.style.left = `${home}%`;
-    });
-    state.builtFor = status.config_hash;
+  function showToast(message) {
+    const toast = $("toast");
+    clearTimeout(state.toastTimer);
+    toast.textContent = message || "";
+    toast.hidden = !message;
+    if (message) {
+      state.toastTimer = setTimeout(() => {
+        toast.hidden = true;
+      }, 4500);
+    }
   }
 
-  function applyDisabledState(status) {
-    AXES.forEach((name) => {
-      const axis = status.axes[name];
-      const homed = Boolean(status.homed[name]);
-      const canMove = status.connected && homed && !status.estopped;
-      const article = document.querySelector(`[data-axis="${name}"]`);
-      if (!article) return;
-      article.querySelectorAll("[data-jog-axis]").forEach((button) => {
-        button.disabled = state.busy || !canMove;
+  function format(value, axis) {
+    if (value === null || value === undefined || Number.isNaN(Number(value))) {
+      return "—";
+    }
+    const digits = axis.kind === "rotary" ? 1 : 2;
+    return Number(Number(value).toFixed(digits)).toString();
+  }
+
+  function canUse(axes) {
+    if (!state.status || !state.status.connected || state.status.estopped) {
+      return false;
+    }
+    return axes.every(([axis]) => Boolean(state.status.homed[axis]));
+  }
+
+  function jogDelta(axisName, normalized) {
+    const magnitude = Math.abs(normalized);
+    const deadzone = 0.18;
+    if (magnitude < deadzone) return null;
+    const axis = state.status.axes[axisName];
+    const t = (magnitude - deadzone) / (1 - deadzone);
+    const step =
+      axis.kind === "rotary" ? 0.5 + 3.5 * t : 0.08 + 0.72 * t;
+    const digits = axis.kind === "rotary" ? 1 : 2;
+    const delta = Number((Math.sign(normalized) * step).toFixed(digits));
+    return delta === 0 ? null : delta;
+  }
+
+  async function sendJog(axis, normalized) {
+    const delta = jogDelta(axis, normalized);
+    if (delta === null) return true;
+    try {
+      const payload = await api("/api/jog", {
+        method: "POST",
+        body: JSON.stringify({ axis, delta }),
       });
-      const form = article.querySelector(`[data-move-axis="${name}"]`);
-      if (form) {
-        form.querySelectorAll("button, input").forEach((element) => {
-          element.disabled = state.busy || !canMove;
-        });
+      render(payload.status);
+      return true;
+    } catch (error) {
+      showToast(error.message);
+      return false;
+    }
+  }
+
+  function setupStick(element, axes) {
+    const knob = element.querySelector(".stick-knob");
+    const motion = {
+      pointerId: null,
+      active: false,
+      loop: null,
+      x: 0,
+      y: 0,
+    };
+
+    function resetKnob() {
+      motion.x = 0;
+      motion.y = 0;
+      knob.style.transform = "translate(-50%, -50%)";
+    }
+
+    function updateFromPointer(event) {
+      const rect = element.getBoundingClientRect();
+      const radius = rect.width * 0.31;
+      let dx = event.clientX - (rect.left + rect.width / 2);
+      let dy = event.clientY - (rect.top + rect.height / 2);
+      const length = Math.hypot(dx, dy);
+      if (length > radius) {
+        dx = (dx / length) * radius;
+        dy = (dy / length) * radius;
       }
-      const tag = article.querySelector(`[data-homed="${name}"]`);
-      tag.textContent = homed ? "homed" : "unhomed";
-      tag.className = `tag ${homed ? "tag-homed" : "tag-unhomed"}`;
-      article.querySelector(`[data-limit="${name}"]`).textContent =
-        `${number(axis.min, axis)} .. ${number(axis.max, axis)} ${unit(axis)}`;
+      motion.x = dx / radius;
+      motion.y = dy / radius;
+      knob.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
+    }
+
+    function stop() {
+      motion.active = false;
+      motion.pointerId = null;
+      clearTimeout(motion.loop);
+      motion.loop = null;
+      resetKnob();
+    }
+
+    async function tick() {
+      motion.loop = null;
+      if (!motion.active) return;
+      if (!canUse(axes)) {
+        stop();
+        return;
+      }
+      for (const [axis, component] of axes) {
+        const value = component === "x" ? motion.x : motion.y;
+        if (!(await sendJog(axis, value))) {
+          stop();
+          return;
+        }
+      }
+      if (motion.active) {
+        motion.loop = setTimeout(tick, 120);
+      }
+    }
+
+    element.addEventListener("pointerdown", (event) => {
+      if (!canUse(axes)) return;
+      event.preventDefault();
+      motion.pointerId = event.pointerId;
+      element.setPointerCapture(event.pointerId);
+      updateFromPointer(event);
+      motion.active = true;
+      tick();
     });
-    document.querySelectorAll("[data-home]").forEach((button) => {
-      button.disabled = state.busy || !status.connected || status.estopped;
+
+    element.addEventListener("pointermove", (event) => {
+      if (!motion.active || event.pointerId !== motion.pointerId) return;
+      event.preventDefault();
+      updateFromPointer(event);
     });
+
+    for (const type of ["pointerup", "pointercancel", "lostpointercapture"]) {
+      element.addEventListener(type, stop);
+    }
+
+    element.addEventListener("keydown", async (event) => {
+      const directions = {
+        ArrowLeft: [-1, 0],
+        ArrowRight: [1, 0],
+        ArrowUp: [0, -1],
+        ArrowDown: [0, 1],
+      };
+      const direction = directions[event.key];
+      if (!direction || !canUse(axes)) return;
+      event.preventDefault();
+      for (const [axis, component] of axes) {
+        const value = component === "x" ? direction[0] : direction[1];
+        if (value) await sendJog(axis, value);
+      }
+    });
+
+    element.addEventListener("contextmenu", (event) => event.preventDefault());
+    window.addEventListener("blur", stop);
   }
 
   function render(status) {
     state.status = status;
-    if (state.builtFor !== status.config_hash) {
-      buildAxes(status);
-    }
-
-    const link = $("link-state");
-    link.textContent = status.connected ? "connected" : "offline";
-    link.className = `value ${status.connected ? "value-online" : "value-offline"}`;
-    $("klipper-state").textContent = status.klippy_state || "—";
-    $("klipper-state").className =
-      status.klippy_state === "ready"
-        ? "value value-online"
-        : status.klippy_state === "shutdown"
-          ? "value value-alarm"
-          : "value";
-    $("config-hash").textContent = status.config_hash || "—";
-    $("footer-config").textContent = `config ${status.config_hash || "—"}`;
-    $("connect").textContent = status.connected ? "Reconnect" : "Connect";
+    const led = $("link-led");
+    const ready = status.connected && status.klippy_state === "ready";
+    const alarm = status.estopped || status.klippy_state === "shutdown";
+    led.className = `link-led ${alarm ? "is-alarm" : ready ? "is-ready" : ""}`;
+    led.setAttribute(
+      "aria-label",
+      alarm
+        ? "Emergency stop latched"
+        : ready
+          ? "Connected and ready"
+          : "Offline"
+    );
     document.body.dataset.estopped = status.estopped ? "true" : "false";
 
-    AXES.forEach((name) => {
-      const axis = status.axes[name];
-      const position = status.positions[name];
-      const readout = document.querySelector(`[data-position="${name}"]`);
-      readout.textContent = number(position, axis);
-      const marker = document.querySelector(`[data-marker="${name}"]`);
-      const pct = percent(position, axis);
-      marker.style.opacity = pct === null ? "0" : "1";
-      if (pct !== null) marker.style.left = `${pct}%`;
-    });
-
-    applyDisabledState(status);
-
-    if (Array.isArray(status.tip) && status.tip.length === 3) {
-      $("tip-x").textContent = Number(status.tip[0]).toFixed(2);
-      $("tip-y").textContent = Number(status.tip[1]).toFixed(2);
-      $("tip-z").textContent = Number(status.tip[2]).toFixed(2);
-      $("tip-note").textContent = "Device-frame tip, millimetres.";
-    } else {
-      $("tip-x").textContent = "—";
-      $("tip-y").textContent = "—";
-      $("tip-z").textContent = "—";
-      $("tip-note").textContent = "All axes must be homed.";
+    const values = {
+      m1: $("m1-value"),
+      m2: $("m2-value"),
+      m3: $("m3-value"),
+    };
+    for (const axis of ["m1", "m2", "m3"]) {
+      values[axis].textContent = format(status.positions[axis], status.axes[axis]);
     }
 
-    const message =
-      status.error ||
-      state.actionError ||
-      (status.estopped
-        ? "Emergency stop latched. Restart Klipper and reconnect."
-        : "");
-    setBanner(message);
-  }
+    const leftReady =
+      status.connected &&
+      !status.estopped &&
+      status.homed.m1 &&
+      status.homed.m3;
+    const rightReady = status.connected && !status.estopped && status.homed.m2;
+    const left = document.querySelector('[data-stick="left"]');
+    const right = document.querySelector('[data-stick="right"]');
+    left.classList.toggle("is-disabled", !leftReady);
+    left.classList.toggle("is-homed", leftReady);
+    right.classList.toggle("is-disabled", !rightReady);
+    right.classList.toggle("is-homed", rightReady);
+    left.closest(".stick-slot").dataset.homed = String(leftReady);
+    right.closest(".stick-slot").dataset.homed = String(rightReady);
 
-  function scheduleRefresh(delay = 1000) {
-    clearTimeout(state.refreshTimer);
-    state.refreshTimer = setTimeout(refresh, delay);
+    $("home").disabled = !status.connected || status.estopped;
+    $("connect").classList.toggle("is-offline", !status.connected);
+
+    if (status.error && status.error !== state.lastError) {
+      showToast(status.error);
+    }
+    state.lastError = status.error || "";
   }
 
   async function refresh() {
@@ -237,108 +242,48 @@
       const payload = await api("/api/status");
       render(payload.status);
     } catch (error) {
-      setBanner(error.message);
+      showToast(error.message);
     } finally {
       state.polling = false;
-      scheduleRefresh();
+      clearTimeout(state.timer);
+      state.timer = setTimeout(refresh, 700);
     }
   }
 
-  async function runAction(label, request) {
-    if (state.busy) return;
-    state.actionError = "";
-    setBusy(true);
+  async function act(request, message = "") {
     try {
       const payload = await request();
-      $("last-action").textContent = label;
       render(payload.status);
-      setBanner("");
+      showToast(message);
     } catch (error) {
-      state.actionError = error.message;
-      setBanner(error.message);
-    } finally {
-      setBusy(false);
-      scheduleRefresh(120);
+      showToast(error.message);
     }
   }
 
-  async function emergencyStop() {
-    state.actionError = "";
-    setBusy(true);
-    try {
-      const payload = await api("/api/estop", { method: "POST" });
-      $("last-action").textContent = "Emergency stop sent. Restart Klipper and reconnect.";
-      render(payload.status);
-      setBanner("");
-    } catch (error) {
-      state.actionError = error.message;
-      setBanner(error.message);
-    } finally {
-      setBusy(false);
-      scheduleRefresh(120);
-    }
-  }
-
-  $("connect").addEventListener("click", () => {
-    runAction("Connected.", () => api("/api/connect", { method: "POST" }));
-  });
-
-  $("estop").addEventListener("click", emergencyStop);
-
-  document.addEventListener("click", (event) => {
-    const jog = event.target.closest("[data-jog-axis]");
-    if (jog) {
-      const axis = jog.dataset.jogAxis;
-      const delta = Number(jog.dataset.delta);
-      const name = axis.toUpperCase();
-      runAction(
-        `${name} ${delta > 0 ? "+" : ""}${delta}`,
-        () =>
-          api("/api/jog", {
-            method: "POST",
-            body: JSON.stringify({ axis, delta }),
-          })
-      );
-      return;
-    }
-
-    const home = event.target.closest("[data-home]");
-    if (home) {
-      const axis = home.dataset.home;
-      const label = axis === "all" ? "Home all." : `Home ${axis.toUpperCase()}.`;
-      runAction(label, () =>
-        api("/api/home", {
-          method: "POST",
-          body: JSON.stringify({ axis }),
-        })
-      );
-    }
-  });
-
-  document.addEventListener("submit", (event) => {
-    const form = event.target.closest("[data-move-axis]");
-    if (!form) return;
-    event.preventDefault();
-    const axis = form.dataset.moveAxis;
-    const input = form.querySelector('input[name="position"]');
-    if (input.value.trim() === "") {
-      setBanner("Enter a target position first.");
-      return;
-    }
-    const position = Number(input.value);
-    if (!Number.isFinite(position)) {
-      setBanner("Target position must be a finite number.");
-      return;
-    }
-    runAction(
-      `${axis.toUpperCase()} move to ${position}.`,
-      () =>
-        api("/api/move", {
-          method: "POST",
-          body: JSON.stringify({ axis, position }),
-        })
+  $("home").addEventListener("click", () => {
+    act(() =>
+      api("/api/home", {
+        method: "POST",
+        body: JSON.stringify({ axis: "all" }),
+      })
     );
   });
 
+  $("connect").addEventListener("click", () => {
+    act(() => api("/api/connect", { method: "POST" }));
+  });
+
+  $("estop").addEventListener("click", () => {
+    act(
+      () => api("/api/estop", { method: "POST" }),
+      "Emergency stop sent."
+    );
+  });
+
+  setupStick(document.querySelector('[data-stick="left"]'), [
+    ["m1", "x"],
+    ["m3", "y"],
+  ]);
+  setupStick(document.querySelector('[data-stick="right"]'), [["m2", "y"]]);
   refresh();
 })();
