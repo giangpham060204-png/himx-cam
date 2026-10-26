@@ -74,8 +74,9 @@ placeholder until the Pico is flashed.
 ## Testing
 
 Read `docs/how-to-test.md` for the L0–L6 ladder, exact commands, expected
-output, and troubleshooting. Read `docs/bench-checklist.md` before any real
-motor test.
+output, and troubleshooting. Read `docs/simulation-wiring-guide.md` for the
+combined simulation, Pico/TMC2209 wiring, and first-power-up guide. Read
+`docs/bench-checklist.md` before any real motor test.
 
 ## Safety
 
