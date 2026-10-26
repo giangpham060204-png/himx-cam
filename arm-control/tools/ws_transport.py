@@ -100,7 +100,12 @@ class WebSocketTransport:
             return "printer.firmware_restart", None
         if method == "GET" and path.startswith("/server/gcode_store"):
             query = parse_qs(urlparse(path).query)
-            count = int(query.get("count", ["50"])[0])
+            try:
+                count = int(query.get("count", ["50"])[0])
+            except ValueError:
+                raise MoonrakerError(
+                    f"unsupported WebSocket route: {method} {path}"
+                ) from None
             return "server.gcode_store", {"count": count}
         raise MoonrakerError(f"unsupported WebSocket route: {method} {path}")
 
@@ -121,7 +126,7 @@ class WebSocketTransport:
             self._ws = ws
             self._closed = False
             self._reader = threading.Thread(
-                target=self._read_loop, daemon=True
+                target=self._read_loop, args=(ws,), daemon=True
             )
             self._reader.start()
             try:
@@ -173,8 +178,9 @@ class WebSocketTransport:
             with self._pending_lock:
                 self._pending.pop(request_id, None)
 
-    def _read_loop(self) -> None:
-        ws = self._ws
+    def _read_loop(self, ws=None) -> None:
+        if ws is None:
+            ws = self._ws
         try:
             while ws is not None and not self._closed:
                 raw = ws.recv()
@@ -194,13 +200,17 @@ class WebSocketTransport:
                     continue
                 method = message.get("method")
                 if method and self._notification_handler is not None:
-                    self._notification_handler(
-                        str(method), message.get("params", [])
-                    )
+                    try:
+                        self._notification_handler(
+                            str(method), message.get("params", [])
+                        )
+                    except Exception:
+                        pass
         except Exception:
             pass
         finally:
-            self._closed = True
+            if self._ws is ws:
+                self._closed = True
 
     def _disconnect(self) -> None:
         self._closed = True

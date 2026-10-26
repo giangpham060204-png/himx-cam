@@ -131,3 +131,65 @@ def test_unknown_route_raises():
     finally:
         transport.close()
         fake.close()
+
+
+def test_bad_gcode_store_count_raises_moonraker_error():
+    transport = WebSocketTransport("http://127.0.0.1:9", timeout=0.5)
+    try:
+        with pytest.raises(MoonrakerError, match="unsupported"):
+            transport.request("GET", "/server/gcode_store?count=abc")
+    finally:
+        transport.close()
+
+
+def test_stale_reader_does_not_close_fresh_connection():
+    """A reader for a superseded socket must not mark the new one closed."""
+
+    class DeadSocket:
+        def recv(self):
+            raise OSError("socket closed")
+
+        def close(self):
+            pass
+
+    transport = WebSocketTransport("http://127.0.0.1:9", timeout=0.5)
+    old, new = DeadSocket(), DeadSocket()
+    transport._ws = new
+    transport._closed = False
+    try:
+        transport._read_loop(old)
+        assert transport._closed is False
+        assert transport._ws is new
+        transport._read_loop(new)
+        assert transport._closed is True
+    finally:
+        transport.close()
+
+
+def test_notification_handler_exception_does_not_kill_reader():
+    fake = FakeMoonraker(behavior="notify")
+    transport = WebSocketTransport(f"http://127.0.0.1:{fake.port}", timeout=2.0)
+    calls = []
+
+    def bad_handler(method, params):
+        calls.append(method)
+        raise RuntimeError("subscriber boom")
+
+    transport.set_notification_handler(bad_handler)
+    try:
+        assert transport.request("GET", "/printer/info") == {
+            "result": {"state": "ready"}
+        }
+        deadline = time.monotonic() + 2.0
+        while not calls and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert calls, "expected the failing handler to be invoked"
+        assert transport.request("GET", "/printer/info") == {
+            "result": {"state": "ready"}
+        }
+        assert fake.connections == 1, (
+            "reader loop died on handler exception and forced a reconnect"
+        )
+    finally:
+        transport.close()
+        fake.close()
