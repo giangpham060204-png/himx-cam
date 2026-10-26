@@ -1,6 +1,7 @@
 """Stack A/B kinematics, wrap, and refusal tests."""
 
 import dataclasses
+import math
 import pathlib
 import sys
 
@@ -69,6 +70,17 @@ def test_stack_b_inverse_uses_the_only_valid_branch():
     result = inverse(_stack_b(), (0.0, 0.0, 140.0))
 
     assert (result.m1, result.m2, result.m3) == pytest.approx((0.0, -180.0, 100.0))
+
+
+def test_stack_b_first_branch_wins_when_both_branches_are_valid():
+    # dz=90, R=100 -> base=asin(0.9)~=64.158 deg; x=50 puts both branch
+    # extensions (x -/+ R*cos(base)) inside m3 limits [0, 100]. With no
+    # current position the base branch must come first, deterministically.
+    result = inverse(_stack_b(), (50.0, 0.0, 230.0))
+
+    assert result.m1 == pytest.approx(0.0)
+    assert result.m3 == pytest.approx(50.0 - 100.0 * math.sqrt(1.0 - 0.9**2))
+    assert result.m2 == pytest.approx(math.degrees(math.asin(0.9)) - 360.0)
 
 
 def test_unreachable_tip_is_refused():
