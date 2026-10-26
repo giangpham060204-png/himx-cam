@@ -31,8 +31,8 @@ class WebSocketTransport:
     ):
         self.ws_url = self._ws_url(base_url)
         self.timeout = timeout
-        self._ws = None
-        self._reader = None
+        self._ws: websocket.WebSocket | None = None
+        self._reader: threading.Thread | None = None
         self._closed = True
         self._pending: dict[int, tuple[threading.Event, dict[str, Any]]] = {}
         self._pending_lock = threading.Lock()
