@@ -357,3 +357,31 @@ def test_restart_calls_firmware_restart_and_clears_state():
     assert ("restart",) in client.calls
     assert controller.faulted is False
     assert controller.homed == {"m1": False, "m2": False, "m3": False}
+
+
+def test_m2_total_rotation_tracks_from_home():
+    client = FakeClient()
+    controller = _controller(client)
+    controller.home("m2")
+    controller.move_joint("m2", 30.0)
+    controller.move_joint("m2", -20.0)
+
+    assert controller.m2_total_deg == pytest.approx(-20.0)
+    assert controller.status()["m2_total_deg"] == pytest.approx(-20.0)
+
+
+def test_m2_total_refuses_beyond_cable_wind():
+    import dataclasses
+
+    m2 = dataclasses.replace(CONFIG.axes["m2"], home_position=180.0)
+    config = dataclasses.replace(
+        CONFIG, axes={**CONFIG.axes, "m2": m2}
+    )
+    client = FakeClient()
+    controller = ArmController(config, client, RecordingAudit())
+    controller.home("m2")
+    controller.move_joint("m2", 360.0)
+    controller.move_joint("m2", 0.0)
+
+    with pytest.raises(OutOfRangeError, match="cable"):
+        controller.move_joint("m2", -360.0)

@@ -104,6 +104,8 @@ class ArmController:
         self._run("set_position", axis_name, zero)
         self.positions[axis_name] = axis.home_position
         self.homed[axis_name] = True
+        if axis_name == "m2":
+            self.m2_total_deg = 0.0
 
     def home_all(self) -> None:
         for axis_name in self.config.home_order:
@@ -122,11 +124,33 @@ class ArmController:
             self._require_ready()
             self._require_homed(axis_name)
             command = manual_move(self.config, axis_name, position, speed, accel)
+            current_m2 = (
+                self.positions["m2"] if axis_name == "m2" else None
+            )
+            new_m2_total = None
+            if axis_name == "m2":
+                if current_m2 is None:
+                    raise NotHomedError("m2 has no trusted position")
+                new_m2_total = (
+                    self.m2_total_deg + position - current_m2
+                )
+                if (
+                    not self.config.slip_ring
+                    and abs(new_m2_total)
+                    > self.config.m2_cable_wind_deg + 1e-9
+                ):
+                    raise OutOfRangeError(
+                        f"m2 total rotation {new_m2_total:g} exceeds "
+                        f"cable wind {self.config.m2_cable_wind_deg:g}"
+                    )
         except ArmError as exc:
             self._record_refusal(axis_name, exc)
             raise
         self._run("move", axis_name, command)
         self.positions[axis_name] = position
+        if axis_name == "m2":
+            assert new_m2_total is not None
+            self.m2_total_deg = new_m2_total
 
     def jog(
         self,
@@ -188,6 +212,7 @@ class ArmController:
             self.estopped = True
             self.homed = {name: False for name in AXIS_NAMES}
             self.positions = {name: None for name in AXIS_NAMES}
+            self.m2_total_deg = 0.0
             self.audit.record("estop", config_hash=self.config.config_hash)
 
     def endstops(self) -> dict[str, str]:
