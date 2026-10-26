@@ -12,12 +12,12 @@ arm-control/
 ├── tools/              operator CLI, bench CLI, web console, Klipper simulator harness
 ├── web/                local console HTML/CSS/JS
 ├── tests/              arm-only pytest suite
-├── docs/               specs, design, test guide, bench checklist (local)
+├── documentations/     specs, design, test guide, bench checklist (local)
 └── sketches/           arm/RCM sketches (local)
 ```
 
-`docs/` and `sketches/` are kept out of git by project convention. The code,
-tools, and tests are tracked.
+`documentations/` and `sketches/` are local-only by project convention.
+Plans and specs live under `../docs/superpowers/`.
 
 ## Quick start
 
@@ -73,10 +73,11 @@ placeholder until the Pico is flashed.
 
 ## Testing
 
-Read `docs/how-to-test.md` for the L0–L6 ladder, exact commands, expected
-output, and troubleshooting. Read `docs/simulation-wiring-guide.md` for the
-combined simulation, Pico/TMC2209 wiring, and first-power-up guide. Read
-`docs/bench-checklist.md` before any real motor test.
+Read `documentations/how-to-test.md` for the L0–L6 ladder, exact commands,
+expected output, and troubleshooting. Read
+`documentations/simulation-wiring-guide.md` for the combined simulation,
+Pico/TMC2209 wiring, and first-power-up guide. Read
+`documentations/bench-checklist.md` before any real motor test.
 
 ## Safety
 
