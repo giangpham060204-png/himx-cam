@@ -75,7 +75,7 @@ class WebState:
         self.last_error = ""
 
     def _axis_meta(self, config: RobotConfig) -> dict[str, dict[str, object]]:
-        result = {}
+        result: dict[str, dict[str, object]] = {}
         for name in AXIS_NAMES:
             axis = config.axes[name]
             result[name] = {

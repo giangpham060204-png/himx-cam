@@ -16,7 +16,6 @@ from arm_control.errors import (  # noqa: E402
     OutOfRangeError,
     TmcFaultError,
 )
-from arm_control.kinematics import JointPose  # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 CONFIG = load_config(ROOT / "arm_control" / "config" / "arm.toml")

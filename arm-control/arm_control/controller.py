@@ -198,11 +198,13 @@ class ArmController:
                 "pose requires all axes homed; missing " + ", ".join(missing)
             )
         positions = self.positions
-        joints = JointPose(
-            m1=float(positions["m1"]),
-            m2=float(positions["m2"]),
-            m3=float(positions["m3"]),
-        )
+        if any(positions[name] is None for name in AXIS_NAMES):
+            raise NotHomedError("pose requires all axes homed")
+        m1 = positions["m1"]
+        m2 = positions["m2"]
+        m3 = positions["m3"]
+        assert m1 is not None and m2 is not None and m3 is not None
+        joints = JointPose(m1=m1, m2=m2, m3=m3)
         return forward(self.config, joints)
 
     def stop(self) -> None:
