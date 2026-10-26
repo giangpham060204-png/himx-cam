@@ -40,6 +40,10 @@ class FakeClient:
         }
         self.fail = fail
         self.calls = []
+        self.ready_calls = []
+
+    def wait_ready(self, timeout=10.0):
+        self.ready_calls.append(timeout)
 
     def klippy_state(self):
         return self.state
@@ -258,3 +262,66 @@ def test_jog_repeat_sleeps_between_moves_only(monkeypatch):
 
     assert controller.positions["m1"] == 3.0
     assert sleeps == [0.1, 0.1]
+
+
+def test_connect_waits_for_ready_and_clears_fault():
+    client = FakeClient()
+    controller = _controller(client)
+    controller.faulted = True
+    controller.fault_reason = "old fault"
+
+    controller.connect()
+
+    assert client.ready_calls == [10.0]
+    assert controller.faulted is False
+    assert controller.fault_reason == ""
+
+
+def test_move_refused_when_klippy_not_ready_latches():
+    client = FakeClient(state="shutdown")
+    controller = _controller(client)
+    controller.homed = {"m1": True, "m2": True, "m3": True}
+    controller.positions = {"m1": 0.0, "m2": 0.0, "m3": 0.0}
+
+    with pytest.raises(MoonrakerError, match="shutdown"):
+        controller.move_joint("m1", 1.0)
+
+    assert controller.faulted is True
+    assert "shutdown" in controller.fault_reason
+    assert client.calls == []
+
+
+def test_move_error_latches_and_refuses_next_move():
+    client = FakeClient(fail=MoonrakerError("boom"))
+    controller = _controller(client)
+    controller.homed = {"m1": True, "m2": True, "m3": True}
+    controller.positions = {"m1": 0.0, "m2": 0.0, "m3": 0.0}
+
+    with pytest.raises(MoonrakerError, match="boom"):
+        controller.move_joint("m1", 1.0)
+
+    assert controller.faulted is True
+    assert "boom" in controller.fault_reason
+    assert controller.homed == {"m1": False, "m2": False, "m3": False}
+    assert controller.positions == {"m1": None, "m2": None, "m3": None}
+
+    with pytest.raises(ArmError, match="faulted"):
+        controller.move_joint("m1", 2.0)
+
+    assert len(client.calls) == 1
+
+
+def test_connect_failure_leaves_fault_latched(monkeypatch):
+    client = FakeClient()
+    controller = _controller(client)
+
+    def _timeout(timeout=10.0):
+        raise MoonrakerError("not ready")
+
+    monkeypatch.setattr(client, "wait_ready", _timeout)
+
+    with pytest.raises(MoonrakerError, match="not ready"):
+        controller.connect()
+
+    assert controller.faulted is True
+    assert controller.fault_reason == "not ready"

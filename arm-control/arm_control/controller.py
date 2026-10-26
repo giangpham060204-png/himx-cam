@@ -33,22 +33,33 @@ class ArmController:
             name: None for name in AXIS_NAMES
         }
         self.estopped = False
+        self.faulted = False
+        self.fault_reason = ""
 
-    def connect(self) -> None:
-        state = self.client.klippy_state()
-        if state != "ready":
-            raise MoonrakerError(f"Klipper is {state!r}, not ready")
-        objects = self.client.objects()
-        required = {f"manual_stepper {name}" for name in AXIS_NAMES}
-        required.add("query_endstops")
-        missing = required - objects
-        if missing:
-            raise MoonrakerError(
-                "Moonraker is missing objects: " + ", ".join(sorted(missing))
-            )
+    def connect(self, wait_timeout: float = 10.0) -> None:
+        try:
+            self.client.wait_ready(timeout=wait_timeout)
+            state = self.client.klippy_state()
+            if state != "ready":
+                raise MoonrakerError(f"Klipper is {state!r}, not ready")
+            objects = self.client.objects()
+            required = {f"manual_stepper {name}" for name in AXIS_NAMES}
+            required.add("query_endstops")
+            missing = required - objects
+            if missing:
+                raise MoonrakerError(
+                    "Moonraker is missing objects: "
+                    + ", ".join(sorted(missing))
+                )
+        except Exception as exc:
+            self._fault(str(exc))
+            raise
+
         self.homed = {name: False for name in AXIS_NAMES}
         self.positions = {name: None for name in AXIS_NAMES}
         self.estopped = False
+        self.faulted = False
+        self.fault_reason = ""
         self.audit.record(
             "connect", klippy_state=state, config_hash=self.config.config_hash
         )
@@ -63,13 +74,16 @@ class ArmController:
             "positions": dict(self.positions),
             "tip": tip,
             "estopped": self.estopped,
+            "faulted": self.faulted,
+            "fault_reason": self.fault_reason,
             "config_hash": self.config.config_hash,
         }
 
     def home(self, axis_name: str) -> None:
         try:
             self._require_axis(axis_name)
-            self._require_not_estopped()
+            self._require_operable()
+            self._require_ready()
             axis = self.config.axes[axis_name]
             command = manual_home(self.config, axis_name)
             zero = set_position(self.config, axis_name, axis.home_position)
@@ -94,7 +108,8 @@ class ArmController:
     ) -> None:
         try:
             self._require_axis(axis_name)
-            self._require_not_estopped()
+            self._require_operable()
+            self._require_ready()
             self._require_homed(axis_name)
             command = manual_move(self.config, axis_name, position, speed, accel)
         except ArmError as exc:
@@ -112,7 +127,7 @@ class ArmController:
     ) -> None:
         try:
             self._require_axis(axis_name)
-            self._require_not_estopped()
+            self._require_operable()
             current = self.positions[axis_name]
             if current is None or not self.homed[axis_name]:
                 raise NotHomedError(f"axis {axis_name} is not homed")
@@ -177,6 +192,37 @@ class ArmController:
         self.client.run_script(f"DUMP_TMC STEPPER={axis_name}")
         return self.client.gcode_store(count=20)
 
+    def _fault(self, reason: str) -> None:
+        self.faulted = True
+        self.fault_reason = reason
+        self.homed = {name: False for name in AXIS_NAMES}
+        self.positions = {name: None for name in AXIS_NAMES}
+        self.audit.record(
+            "fault", reason=reason, config_hash=self.config.config_hash
+        )
+
+    def _require_operable(self) -> None:
+        if self.estopped:
+            raise ArmError(
+                "emergency stop is latched; restart Klipper and reconnect"
+            )
+        if self.faulted:
+            raise ArmError(
+                f"controller faulted: {self.fault_reason}; "
+                "restart Klipper and reconnect"
+            )
+
+    def _require_ready(self) -> None:
+        try:
+            state = self.client.klippy_state()
+        except Exception as exc:
+            self._fault(str(exc))
+            raise
+        if state != "ready":
+            reason = f"Klipper is {state!r}, not ready"
+            self._fault(reason)
+            raise MoonrakerError(reason)
+
     def _record_refusal(self, axis_name: str, error: ArmError) -> None:
         self.audit.record(
             "refuse",
@@ -189,6 +235,7 @@ class ArmController:
         try:
             self.client.run_script(command)
         except Exception as exc:
+            self._fault(str(exc))
             self.audit.record(
                 "error",
                 axis=axis_name,
@@ -208,12 +255,6 @@ class ArmController:
         if axis_name not in AXIS_NAMES:
             raise OutOfRangeError(
                 f"unknown axis {axis_name!r}; expected m1, m2, or m3"
-            )
-
-    def _require_not_estopped(self) -> None:
-        if self.estopped:
-            raise ArmError(
-                "emergency stop is latched; restart Klipper and reconnect"
             )
 
     def _require_homed(self, axis_name: str) -> None:
