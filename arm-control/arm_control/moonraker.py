@@ -127,6 +127,9 @@ class MoonrakerClient:
             f"Moonraker refused firmware restart: {response!r}"
         )
 
+    def supports_notifications(self) -> bool:
+        return bool(getattr(self.transport, "supports_notifications", False))
+
     def query_endstops_text(self, timeout: float = 2.0) -> dict[str, str]:
         self._gcode_responses.clear()
         self.run_script("QUERY_ENDSTOPS")
@@ -135,7 +138,10 @@ class MoonrakerClient:
         while time.monotonic() < deadline:
             result = {}
             for line in self.gcode_responses():
-                match = pattern.match(line.strip())
+                stripped = line.strip()
+                if stripped.startswith("//"):
+                    stripped = stripped[2:].lstrip()
+                match = pattern.match(stripped)
                 if match is not None:
                     result[match.group(1).strip()] = match.group(2)
             if result:

@@ -180,7 +180,7 @@ class NotifyingTransport:
         if path == "/printer/firmware_restart":
             return {"result": "ok"}
         if path == "/printer/gcode/script":
-            self.handler("notify_gcode_response", ["m1: open"])
+            self.handler("notify_gcode_response", ["// m1: open"])
             return {"result": "ok"}
         raise AssertionError(path)
 
@@ -217,3 +217,23 @@ def test_query_endstops_text_parses_ws_responses():
     client = MoonrakerClient(transport)
 
     assert client.query_endstops_text() == {"m1": "open"}
+
+
+def test_query_endstops_text_strips_comment_prefix():
+    transport = NotifyingTransport()
+    client = MoonrakerClient(transport)
+
+    assert client.query_endstops_text() == {"m1": "open"}
+    assert client.gcode_responses() == ["// m1: open"]
+
+
+def test_supports_notifications_reflects_transport():
+    assert MoonrakerClient(NotifyingTransport()).supports_notifications() is False
+
+    class WsLike:
+        supports_notifications = True
+
+        def request(self, method, path, body=None, timeout=5.0):
+            raise AssertionError("unused")
+
+    assert MoonrakerClient(WsLike()).supports_notifications() is True

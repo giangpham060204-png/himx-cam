@@ -24,6 +24,8 @@ NotificationHandler = Callable[[str, object], None]
 
 
 class WebSocketTransport:
+    supports_notifications = True
+
     def __init__(
         self,
         base_url: str = "http://127.0.0.1:7125",
@@ -191,8 +193,12 @@ class WebSocketTransport:
                 except json.JSONDecodeError:
                     continue
                 if "id" in message:
+                    try:
+                        request_id = int(message["id"])
+                    except (ValueError, TypeError):
+                        continue
                     with self._pending_lock:
-                        item = self._pending.get(int(message["id"]))
+                        item = self._pending.get(request_id)
                     if item is not None:
                         event, holder = item
                         holder.update(message)

@@ -30,7 +30,8 @@ class RecordingAudit:
 
 
 class FakeClient:
-    def __init__(self, state="ready", objects=None, fail=None):
+    def __init__(self, state="ready", objects=None, fail=None,
+                 supports_notifications=False):
         self.state = state
         self._objects = objects or {
             "manual_stepper m1",
@@ -43,6 +44,8 @@ class FakeClient:
         self.ready_calls = []
         self.notification_handler = None
         self.store = {"gcode_store": [{"message": "ok"}]}
+        self._supports_notifications = supports_notifications
+        self.text_response: dict[str, str] | None = None
 
     def klippy_state(self):
         return self.state
@@ -60,6 +63,15 @@ class FakeClient:
 
     def endstop_status(self):
         return {"m1": "open", "m2": "open", "m3": "open"}
+
+    def supports_notifications(self):
+        return self._supports_notifications
+
+    def query_endstops_text(self, timeout=2.0):
+        self.calls.append(("query_endstops_text",))
+        if self.text_response is not None:
+            return self.text_response
+        return {"m1": "open", "m2": "TRIGGERED", "m3": "open"}
 
     def gcode_store(self, count=50):
         return self.store
@@ -384,3 +396,77 @@ def test_m2_total_refuses_beyond_cable_wind():
 
     with pytest.raises(OutOfRangeError, match="cable"):
         controller.move_joint("m2", -360.0)
+
+
+def test_jog_on_faulted_controller_reports_fault():
+    client = FakeClient()
+    audit = RecordingAudit()
+    controller = _controller(client, audit)
+    controller.home("m1")
+    controller._fault("driver overtemp")
+    client.calls.clear()
+
+    with pytest.raises(ArmError, match="faulted"):
+        controller.jog("m1", 1.0)
+
+    assert client.calls == []
+    assert any(event == "refuse" for event, _ in audit.entries)
+
+
+def test_tmc_dump_run_failure_latches_fault_and_audits_error():
+    audit = RecordingAudit()
+    controller = _controller(
+        FakeClient(fail=MoonrakerError("boom")), audit
+    )
+
+    with pytest.raises(MoonrakerError, match="boom"):
+        controller.tmc_dump("m1")
+
+    assert controller.faulted is True
+    errors = [fields for event, fields in audit.entries if event == "error"]
+    assert errors
+    assert errors[0]["axis"] == "m1"
+    assert "DUMP_TMC" in errors[0]["command"]
+    assert "boom" in errors[0]["error"]
+    assert errors[0]["config_hash"] == CONFIG.config_hash
+
+
+def test_tmc_dump_detects_uppercase_fault_field():
+    client = FakeClient()
+    client.store = {"gcode_store": [{"message": "DRV_ERR=1 OTPW=1"}]}
+    controller = _controller(client)
+
+    with pytest.raises(TmcFaultError, match="DRV_ERR|OTPW"):
+        controller.tmc_dump("m1")
+
+    assert controller.faulted is True
+
+
+def test_endstops_uses_text_when_notifications_supported():
+    client = FakeClient(supports_notifications=True)
+    controller = _controller(client)
+
+    result = controller.endstops()
+
+    assert result == {"m1": "open", "m2": "TRIGGERED", "m3": "open"}
+    assert ("query_endstops_text",) in client.calls
+
+
+def test_endstops_uses_http_status_without_notifications():
+    client = FakeClient(supports_notifications=False)
+    controller = _controller(client)
+
+    assert controller.endstops() == {"m1": "open", "m2": "open", "m3": "open"}
+    assert ("query_endstops_text",) not in client.calls
+
+
+def test_fault_resets_m2_total_deg():
+    client = FakeClient()
+    controller = _controller(client)
+    controller.home("m2")
+    controller.move_joint("m2", 30.0)
+    assert controller.m2_total_deg == pytest.approx(30.0)
+
+    controller._fault("boom")
+
+    assert controller.m2_total_deg == 0.0
