@@ -8,6 +8,7 @@ import socket
 import time
 import urllib.error
 import urllib.request
+from urllib.parse import quote
 from collections import deque
 from typing import Any, Callable, Protocol
 
@@ -177,6 +178,20 @@ class MoonrakerClient:
             raise MoonrakerError(f"unexpected object list: {result!r}")
         return {str(name) for name in result["objects"]}
 
+    def has_object(self, name: str) -> bool:
+        """Return whether Klipper can query a named object.
+
+        Klipper's ``/printer/objects/list`` omits objects such as
+        ``manual_stepper m1`` that do not expose a status object.  Query the
+        object directly so a valid printer is not rejected by the list.
+        """
+        path = "/printer/objects/query?" + quote(name, safe="")
+        result = self._result(self.transport.request("GET", path))
+        if not isinstance(result, dict):
+            raise MoonrakerError(f"unexpected object query: {result!r}")
+        status = result.get("status")
+        return isinstance(status, dict) and name in status
+
     def endstop_status(self) -> dict[str, str]:
         result = self._result(
             self.transport.request("GET", "/printer/query_endstops/status")
@@ -214,7 +229,16 @@ class MoonrakerClient:
     def wait_ready(self, timeout: float = 10.0) -> None:
         deadline = time.monotonic() + timeout
         while True:
-            state = self.klippy_state()
+            try:
+                state = self.klippy_state()
+            except MoonrakerError:
+                # Moonraker can be listening before Klippy connects.  Its
+                # /printer/info route then returns "Method not found"; retry
+                # until the deadline instead of failing the whole connect.
+                if time.monotonic() >= deadline:
+                    raise
+                time.sleep(0.2)
+                continue
             if state == "ready":
                 return
             if state in {"shutdown", "error"}:

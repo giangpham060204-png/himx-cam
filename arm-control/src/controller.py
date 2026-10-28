@@ -59,6 +59,12 @@ class ArmController:
             required.add("query_endstops")
             missing = required - objects
             if missing:
+                # Klipper omits some queryable objects from objects/list.
+                missing = {
+                    name for name in missing
+                    if not self.client.has_object(name)
+                }
+            if missing:
                 raise MoonrakerError(
                     "Moonraker is missing objects: "
                     + ", ".join(sorted(missing))

@@ -118,9 +118,25 @@
       return;
     }
 
+    if (event.target.closest("#home")) {
+      api("/api/home", {
+        method: "POST",
+        body: JSON.stringify({ axis: "all" }),
+      })
+        .then((payload) => {
+          showToast("homed");
+          render(payload.status);
+        })
+        .catch((error) => showToast(error.message));
+      return;
+    }
+
     if (event.target.closest("#estop")) {
       api("/api/estop", { method: "POST" })
-        .then((payload) => render(payload.status))
+        .then((payload) => {
+          showToast("");
+          render(payload.status);
+        })
         .catch((error) => showToast(error.message));
     }
   });
