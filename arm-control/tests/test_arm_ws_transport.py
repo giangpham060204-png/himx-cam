@@ -60,6 +60,17 @@ class FakeMoonraker:
                 if self.behavior == "close_after_info":
                     ws.close()
                     break
+            elif method == "printer.objects.query":
+                self._send(
+                    ws,
+                    {
+                        "jsonrpc": "2.0",
+                        "id": msg["id"],
+                        "result": {
+                            "status": {"manual_stepper m1": {}}
+                        },
+                    },
+                )
             else:
                 self._send(
                     ws,
@@ -75,6 +86,14 @@ class FakeMoonraker:
         self.thread.join(timeout=2.0)
 
 
+def test_default_client_names_are_unique():
+    a = WebSocketTransport("http://127.0.0.1:9", timeout=0.5)
+    b = WebSocketTransport("http://127.0.0.1:9", timeout=0.5)
+
+    assert a.client_name != b.client_name
+    assert a.client_name.startswith("src-")
+
+
 def test_identify_and_request():
     fake = FakeMoonraker()
     transport = WebSocketTransport(f"http://127.0.0.1:{fake.port}", timeout=2.0)
@@ -83,6 +102,18 @@ def test_identify_and_request():
             "result": {"state": "ready"}
         }
         assert fake.connections == 1
+    finally:
+        transport.close()
+        fake.close()
+
+
+def test_objects_query_route_encodes_object_name():
+    fake = FakeMoonraker()
+    transport = WebSocketTransport(f"http://127.0.0.1:{fake.port}", timeout=2.0)
+    try:
+        assert transport.request(
+            "GET", "/printer/objects/query?manual_stepper%20m1"
+        ) == {"result": {"status": {"manual_stepper m1": {}}}}
     finally:
         transport.close()
         fake.close()

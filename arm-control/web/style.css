@@ -127,6 +127,32 @@ body[data-estopped="true"] .controller {
     0 12px 20px rgba(0, 0, 0, 0.3);
 }
 
+.home {
+  position: absolute;
+  top: 8%;
+  left: 7%;
+  z-index: 3;
+  padding: 9px 13px;
+  border: 1px solid var(--body-edge);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, transform 120ms ease;
+}
+
+.home:hover {
+  background: var(--stage-soft);
+  border-color: var(--stage-soft);
+  color: var(--body);
+}
+
+.home:active {
+  transform: translateY(1px);
+}
+
 .stop-mark {
   width: 22px;
   height: 22px;

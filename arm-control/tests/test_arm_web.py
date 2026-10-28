@@ -254,7 +254,7 @@ def test_index_contains_token_and_static_assets(web):
         assert body
 
 
-def test_index_has_only_up_down_and_estop_controls(web):
+def test_index_has_home_up_down_and_estop_controls(web):
     _, _, base = web
 
     with urllib.request.urlopen(base + "/", timeout=5) as response:
@@ -271,7 +271,8 @@ def test_index_has_only_up_down_and_estop_controls(web):
     assert 'aria-label="M3 left"' in html
     assert 'aria-label="M3 right"' in html
     assert 'id="estop"' in html
-    assert 'id="home"' not in html
+    assert 'id="home"' in html
+    assert 'aria-label="Home all axes"' in html
     assert 'id="connect"' not in html
     assert "data-stick" not in html
 

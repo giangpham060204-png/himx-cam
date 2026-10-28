@@ -41,6 +41,7 @@ class FakeClient:
             "query_endstops",
         }
         self.fail = fail
+        self.queryable = set(self._objects)
         self.calls = []
         self.on_run = None
         self.ready_calls = []
@@ -54,6 +55,9 @@ class FakeClient:
 
     def objects(self):
         return set(self._objects)
+
+    def has_object(self, name):
+        return name in self.queryable
 
     def run_script(self, script, timeout=120.0):
         self.calls.append(("run", script))
@@ -99,9 +103,34 @@ def _controller(client=None, audit=None):
 
 def test_connect_requires_ready_and_all_objects():
     client = FakeClient(objects={"manual_stepper m1"})
+    client.queryable = {"manual_stepper m1"}
     controller = _controller(client)
 
     with pytest.raises(MoonrakerError, match="manual_stepper m2"):
+        controller.connect()
+
+
+def test_connect_accepts_queryable_objects_missing_from_list():
+    client = FakeClient(objects={"query_endstops"})
+    client.queryable = {
+        "manual_stepper m1",
+        "manual_stepper m2",
+        "manual_stepper m3",
+        "query_endstops",
+    }
+    controller = _controller(client)
+
+    controller.connect()
+
+    assert controller.faulted is False
+
+
+def test_connect_rejects_truly_missing_objects():
+    client = FakeClient(objects={"query_endstops"})
+    client.queryable = {"query_endstops"}
+    controller = _controller(client)
+
+    with pytest.raises(MoonrakerError, match="manual_stepper m1"):
         controller.connect()
 
 

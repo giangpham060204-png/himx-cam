@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import itertools
 import json
+import os
 import threading
 from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse
@@ -30,9 +31,13 @@ class WebSocketTransport:
         self,
         base_url: str = "http://127.0.0.1:7125",
         timeout: float = 5.0,
+        client_name: str | None = None,
     ):
         self.ws_url = self._ws_url(base_url)
         self.timeout = timeout
+        # Moonraker rejects a second agent with the same name.  Web, bench,
+        # and CLI processes must therefore identify uniquely.
+        self.client_name = client_name or f"src-{os.getpid()}-{id(self):x}"
         self._ws: websocket.WebSocket | None = None
         self._reader: threading.Thread | None = None
         self._closed = True
@@ -90,6 +95,17 @@ class WebSocketTransport:
             return "printer.info", None
         if method == "GET" and path == "/printer/objects/list":
             return "printer.objects.list", None
+        if method == "GET" and path.startswith("/printer/objects/query?"):
+            query = parse_qs(
+                urlparse(path).query, keep_blank_values=True
+            )
+            if not query:
+                raise MoonrakerError(
+                    f"unsupported WebSocket route: {method} {path}"
+                )
+            return "printer.objects.query", {
+                "objects": {name: None for name in query}
+            }
         if method == "GET" and path == "/printer/query_endstops/status":
             return "printer.query_endstops.status", None
         if method == "GET" and path == "/server/info":
@@ -135,7 +151,7 @@ class WebSocketTransport:
                 self._rpc(
                     "server.connection.identify",
                     {
-                        "client_name": "src",
+                        "client_name": self.client_name,
                         "version": "1.0",
                         "type": "agent",
                         "url": "https://localhost/arm-control",

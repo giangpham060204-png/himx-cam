@@ -47,6 +47,29 @@ def test_klippy_state_and_objects():
     assert client.objects() == {"manual_stepper m1", "query_endstops"}
 
 
+def test_has_object_queries_objects_omitted_from_list():
+    transport = FakeTransport(
+        [{"result": {"status": {"manual_stepper m1": {}}}}]
+    )
+    client = MoonrakerClient(transport)
+
+    assert client.has_object("manual_stepper m1") is True
+    assert transport.calls == [
+        (
+            "GET",
+            "/printer/objects/query?manual_stepper%20m1",
+            None,
+            5.0,
+        )
+    ]
+
+
+def test_has_object_returns_false_when_absent():
+    client = MoonrakerClient(FakeTransport([{"result": {"status": {}}}]))
+
+    assert client.has_object("manual_stepper m1") is False
+
+
 def test_run_script_posts_the_script():
     transport = FakeTransport([{"result": "ok"}])
     client = MoonrakerClient(transport)
@@ -98,6 +121,20 @@ def test_wait_ready_times_out_on_startup():
 
     with pytest.raises(MoonrakerTimeout, match="ready"):
         client.wait_ready(timeout=0.0)
+
+
+def test_wait_ready_retries_while_klippy_connects():
+    transport = FakeTransport(
+        [
+            MoonrakerError("Method not found"),
+            {"result": {"state": "ready"}},
+        ]
+    )
+    client = MoonrakerClient(transport)
+
+    client.wait_ready(timeout=1.0)
+
+    assert len(transport.calls) == 2
 
 
 class _Handler(BaseHTTPRequestHandler):
