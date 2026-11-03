@@ -19,4 +19,17 @@ images/
 
 # Arm docs and sketches are local reference material, not code
 arm-control/docs/
+arm-control/documentations/
 arm-control/sketches/
+
+# OpenCode session state (large, machine-local)
+session.json
+
+# Empty npm artifacts (npm work happens in ~/rp2040js, not here)
+package.json
+package-lock.json
+
+# Printer runtime: logs, database, sockets, generated config, backups.
+# Only the start/stop scripts are versioned.
+printer_data/*
+!printer_data/*.sh
