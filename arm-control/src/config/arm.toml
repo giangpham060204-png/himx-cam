@@ -9,7 +9,7 @@ slip_ring = false
 home_order = ["m3", "m2", "m1"]
 
 [klipper]
-serial = "/dev/serial/by-id/usb-Klipper_rp2040_0000000000000000-if00"
+serial = "/dev/serial/by-id/usb-Klipper_rp2040_E66164084383A533-if00"
 kinematics = "none"
 
 [axis.m1]

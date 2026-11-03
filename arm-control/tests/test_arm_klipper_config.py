@@ -25,7 +25,7 @@ def test_generated_config_has_three_steppers_and_three_tmc_sections():
     assert text.count("[manual_stepper ") == 3
     assert text.count("[tmc2209 manual_stepper ") == 3
     assert "kinematics: none" in text
-    assert "serial: /dev/serial/by-id/usb-Klipper_rp2040_0000000000000000-if00" in text
+    assert "serial: /dev/serial/by-id/usb-Klipper_rp2040_E66164084383A533-if00" in text
     assert text.count("position_min: -21") == 2
     assert "position_max: 221" in text
     assert "position_min: -361" in text

@@ -180,7 +180,9 @@ def test_restart_command(capsys):
 
     assert _run(["restart"], controller) == 0
 
-    assert controller.calls == [("connect",), ("restart",)]
+    # Restart must skip connect(): it is the recovery path used while
+    # Klipper is in shutdown after an emergency stop.
+    assert controller.calls == [("restart",)]
 
 
 def test_stop_and_resume_skip_connect(capsys):

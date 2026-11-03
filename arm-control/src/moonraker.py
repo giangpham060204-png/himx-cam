@@ -135,16 +135,20 @@ class MoonrakerClient:
         self._gcode_responses.clear()
         self.run_script("QUERY_ENDSTOPS")
         deadline = time.monotonic() + timeout
-        pattern = re.compile(r"^([^:]+):\s*(open|TRIGGERED)$")
+        # Klipper joins every endstop onto a single line
+        # ("manual_stepper m1:TRIGGERED manual_stepper m2:open"), so scan
+        # each response for all name:state pairs instead of anchoring the
+        # pattern to one pair per line.  Object names may contain spaces.
+        pattern = re.compile(r"([^:]+?):\s*(open|TRIGGERED)")
         while time.monotonic() < deadline:
             result = {}
             for line in self.gcode_responses():
-                stripped = line.strip()
-                if stripped.startswith("//"):
-                    stripped = stripped[2:].lstrip()
-                match = pattern.match(stripped)
-                if match is not None:
-                    result[match.group(1).strip()] = match.group(2)
+                for part in line.splitlines():
+                    stripped = part.strip()
+                    if stripped.startswith("//"):
+                        stripped = stripped[2:].lstrip()
+                    for match in pattern.finditer(stripped):
+                        result[match.group(1).strip()] = match.group(2)
             if result:
                 return result
             time.sleep(0.05)

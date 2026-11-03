@@ -259,6 +259,13 @@ class ArmController:
 
     def restart(self) -> None:
         self.client.firmware_restart()
+        # Klipper drops its connection while it reloads the config and
+        # reattaches to the MCU.  Let that disconnect happen first so
+        # wait_ready retries through it instead of treating the prior
+        # shutdown state as fatal; then wait until Klipper is ready again
+        # before clearing the latched stop/fault state.
+        time.sleep(0.5)
+        self.client.wait_ready(timeout=90.0)
         self.stop_flag.clear()
         self.stop_requested = False
         self.homed = {name: False for name in AXIS_NAMES}

@@ -195,6 +195,14 @@ def run(
         print("emergency stop sent")
         return 0
 
+    # Restart must run before connect(): after an emergency stop Klipper
+    # is in shutdown, so requiring a ready state first would make this
+    # command unusable exactly when recovery is needed.
+    if args.command == "restart":
+        controller.restart()
+        print("restarted")
+        return 0
+
     if args.command == "session":
         controller.connect()
         return _session(controller, input_fn)
