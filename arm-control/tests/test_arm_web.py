@@ -77,6 +77,14 @@ class FakeController:
         self.homed = {name: False for name in AXIS_NAMES}
         self.positions = {name: None for name in AXIS_NAMES}
 
+    def restart(self):
+        self.calls.append(("restart",))
+        self.estopped = False
+        self.faulted = False
+        self.fault_reason = ""
+        self.homed = {name: False for name in AXIS_NAMES}
+        self.positions = {name: None for name in AXIS_NAMES}
+
 
 @pytest.fixture
 def web():
@@ -202,6 +210,37 @@ def test_estop_calls_stop_and_latches(web):
     assert controller.calls == [("connect",), ("stop",)]
 
 
+def test_restart_recovers_estop_and_requires_token(web):
+    _, controller, base = web
+    _request(base, "/api/connect", method="POST")
+    _request(base, "/api/estop", method="POST")
+
+    status, payload = _request(base, "/api/restart", method="POST")
+    status_bad, _ = _request(
+        base, "/api/restart", method="POST", token="wrong"
+    )
+
+    assert status == 200
+    assert status_bad == 403
+    assert payload["ok"] is True
+    assert payload["status"]["estopped"] is False
+    assert payload["status"]["homed"]["m1"] is False
+    assert controller.calls == [("connect",), ("stop",), ("restart",)]
+
+
+def test_restart_clears_fault_state(web):
+    _, controller, base = web
+    controller.faulted = True
+    controller.fault_reason = "Moonraker is missing objects: query_endstops"
+
+    status, payload = _request(base, "/api/restart", method="POST")
+
+    assert status == 200
+    assert payload["status"]["faulted"] is False
+    assert payload["status"]["fault_reason"] == ""
+    assert controller.calls == [("restart",)]
+
+
 def test_post_requires_token(web):
     _, controller, base = web
 
@@ -273,6 +312,8 @@ def test_index_has_home_up_down_and_estop_controls(web):
     assert 'aria-label="M3 right"' in html
     assert 'id="estop"' in html
     assert 'id="home"' in html
+    assert 'id="stack-state"' in html
+    assert 'id="recover"' in html
     assert 'aria-label="Home all axes"' in html
     assert 'id="connect"' not in html
     assert "data-stick" not in html

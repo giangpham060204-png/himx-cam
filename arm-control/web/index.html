@@ -24,6 +24,14 @@
         HOME
       </button>
 
+      <div class="stack-status">
+        <span id="stack-state" class="stack-state" role="status" aria-live="polite">klipper: —</span>
+        <button id="recover" class="recover" type="button" hidden title="Restart Klipper and clear the latched emergency stop / fault" aria-label="Restart Klipper and clear the latched emergency stop or fault">
+          RECOVER
+        </button>
+        <p id="stack-detail" class="stack-detail" hidden></p>
+      </div>
+
       <div class="axis-bank">
         <div class="axis">
           <span class="axis-label">M1</span>

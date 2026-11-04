@@ -10,6 +10,7 @@
     timer: null,
     toastTimer: null,
     lastConnect: 0,
+    recovering: false,
   };
 
   async function api(path, options = {}) {
@@ -68,6 +69,30 @@
     );
     document.body.dataset.estopped = status.estopped ? "true" : "false";
 
+    const stateText = document.getElementById("stack-state");
+    const detail = document.getElementById("stack-detail");
+    const recover = document.getElementById("recover");
+    const klippy = status.connected ? status.klippy_state : "offline";
+    stateText.textContent = `klipper: ${klippy}`;
+    stateText.classList.toggle("is-ready", ready && !alarm);
+    stateText.classList.toggle("is-alarm", alarm || Boolean(status.faulted));
+    // RECOVER appears whenever klippy cannot run motion: e-stop latch,
+    // shutdown state, or an unresolved fault. controller.restart() handles
+    // all three (firmware_restart + wait_ready + latch clear).
+    recover.hidden = !alarm;
+    if (status.faulted && status.fault_reason) {
+      detail.textContent = status.fault_reason;
+      detail.hidden = false;
+    } else if (status.estopped) {
+      detail.textContent = "estop latched; RECOVER restarts klipper";
+      detail.hidden = false;
+    } else if (alarm) {
+      detail.textContent = "klippy down; RECOVER restarts it";
+      detail.hidden = false;
+    } else {
+      detail.hidden = true;
+    }
+
     for (const axis of ["m1", "m2", "m3"]) {
       const value = document.getElementById(`${axis}-value`);
       value.textContent = format(status.positions[axis], status.axes[axis]);
@@ -113,6 +138,22 @@
     }
   }
 
+  async function recover() {
+    if (state.recovering) return;
+    state.recovering = true;
+    showToast("recovering klipper…");
+    try {
+      // Blocks up to ~90s while controller.restart() waits for klippy.
+      const payload = await api("/api/restart", { method: "POST" });
+      showToast("klipper ready");
+      render(payload.status);
+    } catch (error) {
+      showToast(error.message);
+    } finally {
+      state.recovering = false;
+    }
+  }
+
   document.addEventListener("click", (event) => {
     const button = event.target.closest("[data-jog-axis]");
     if (button) {
@@ -130,6 +171,11 @@
           render(payload.status);
         })
         .catch((error) => showToast(error.message));
+      return;
+    }
+
+    if (event.target.closest("#recover")) {
+      recover();
       return;
     }
 

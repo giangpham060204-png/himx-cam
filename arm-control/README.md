@@ -67,7 +67,16 @@ It is a controller surface with M1 up/down, M2 left/right, M3 left/right,
 HOME, and an emergency-stop button. HOME is wired to `/api/home`
 (`home_all`); it respects the same guards as the CLI (M2 is never homed
 from an unknown multi-turn cable state). The physical e-stop remains the
-primary stop. Mainsail on the same host is a diagnostics window only
+primary stop.
+
+The status line also shows the live klippy state (`klipper: ready`,
+`offline`, `shutdown`, …) plus a fault reason. When klippy is down
+(e-stop latch, shutdown, or fault), a RECOVER button appears next to it;
+RECOVER calls `/api/restart` (`controller.restart()`: Moonraker
+`firmware_restart`, wait-ready, clear latched stop/fault — same as
+`arm_cli.py restart`), so an e-stop can be undone from the browser alone.
+
+Mainsail on the same host is a diagnostics window only
 (console, endstops, logs, configs); it is not used to move the arm — stock
 Mainsail and Fluidd cannot host custom panels (verified against v2.19.0
 sources; see `documentations/mainsail-panel.md`), so the console is the
@@ -94,7 +103,11 @@ G-code console (`QUERY_ENDSTOPS`, `MANUAL_STEPPER` probes), Klippy/Moonraker
 logs, MCU info, config editor. Its toolhead control is disabled;
 `manual_stepper` axes are invisible to Moonraker, so Mainsail cannot move
 or read the arm. Arm control lives in this repo's console and (Phase 1)
-the Mainsail arm panel, both talking to `arm_web.py`.
+the Mainsail arm panel, both talking to `arm_web.py`. Mainsail's own
+EMERGENCY-STOP button sends raw `M112` around `ArmController` (no audit,
+no safety-lane bookkeeping), so it is hidden with an inline CSS patch in
+`mainsail_data/dist/index.html`; the toolbar restart menu (⏻) stays as a
+manual recovery path. Reapply that patch after a Mainsail upgrade.
 
 ## Safety
 

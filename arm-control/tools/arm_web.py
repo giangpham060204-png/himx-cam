@@ -199,6 +199,21 @@ class WebState:
             self.last_error = ""
             return self.status()
 
+    def restart(self) -> dict[str, object]:
+        """Recover klippy and clear the latched stop/fault state.
+
+        Mirrors ``arm_cli.py restart`` so a browser-only workflow can undo
+        either an e-stop or a fault without a terminal.
+        """
+        with self.lock:
+            try:
+                self.controller.restart()
+            except Exception as exc:
+                self.last_error = str(exc)
+                raise
+            self.last_error = ""
+            return self.status()
+
 
 class ArmRequestHandler(BaseHTTPRequestHandler):
     state: WebState
@@ -324,6 +339,8 @@ class ArmRequestHandler(BaseHTTPRequestHandler):
                 )
             elif path == "/api/estop":
                 self._json({"ok": True, "status": self.state.estop()})
+            elif path == "/api/restart":
+                self._json({"ok": True, "status": self.state.restart()})
             else:
                 self._json({"ok": False, "error": "not found"}, 404)
         except WebError as exc:

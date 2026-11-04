@@ -156,6 +156,64 @@ body[data-estopped="true"] .controller {
   transform: translateY(1px);
 }
 
+.stack-status {
+  position: absolute;
+  top: 8%;
+  right: 7%;
+  z-index: 3;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px 10px;
+  max-width: 42%;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+  text-align: right;
+}
+
+.stack-state {
+  letter-spacing: 0.04em;
+  font-variant-numeric: tabular-nums;
+}
+
+.stack-state.is-ready {
+  color: var(--teal);
+}
+
+.stack-state.is-alarm {
+  color: var(--alarm);
+}
+
+.stack-detail {
+  width: 100%;
+  margin: 0;
+  font-size: 10px;
+  line-height: 1.4;
+  color: var(--alarm);
+}
+
+.recover {
+  padding: 5px 10px;
+  border: 1px solid var(--alarm);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--alarm);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, transform 120ms ease;
+}
+
+.recover:hover {
+  background: var(--alarm);
+  color: #fff7f2;
+}
+
+.recover:active {
+  transform: translateY(1px);
+}
+
 .stop-mark {
   width: 22px;
   height: 22px;
@@ -298,6 +356,11 @@ body[data-estopped="true"] .estop {
   .estop {
     width: 68px;
     height: 68px;
+  }
+
+  .stack-status {
+    top: 5%;
+    right: 3%;
   }
 
   .stop-mark {
