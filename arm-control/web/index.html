@@ -12,6 +12,10 @@
     <span id="link-led" class="link-led" role="status" aria-label="Offline"></span>
 
     <section class="controller" aria-label="Arm controller">
+      <svg class="pivot" viewBox="0 0 100 100" aria-hidden="true">
+        <path d="M50 8v20M50 72v20M8 50h20M72 50h20" stroke="currentColor" stroke-width="1.5" fill="none"/>
+      </svg>
+
       <button id="estop" class="estop" type="button" aria-label="Emergency stop" title="Emergency stop">
         <span class="stop-mark"></span>
       </button>
@@ -25,8 +29,8 @@
           <span class="axis-label">M1</span>
           <span id="m1-value" class="axis-value">—</span>
           <div class="rocker">
-            <button type="button" data-jog-axis="m1" data-delta="1" aria-label="M1 up">▲</button>
-            <button type="button" data-jog-axis="m1" data-delta="-1" aria-label="M1 down">▼</button>
+            <button type="button" data-jog-axis="m1" data-delta="1" aria-label="M1 up"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M6 14l6-6 6 6" fill="none" stroke="currentColor" stroke-width="2"/></svg></button>
+            <button type="button" data-jog-axis="m1" data-delta="-1" aria-label="M1 down"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M6 10l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2"/></svg></button>
           </div>
         </div>
 
@@ -34,8 +38,8 @@
           <span class="axis-label">M2</span>
           <span id="m2-value" class="axis-value">—</span>
           <div class="rocker">
-            <button type="button" data-jog-axis="m2" data-delta="-1" aria-label="M2 left">◀</button>
-            <button type="button" data-jog-axis="m2" data-delta="1" aria-label="M2 right">▶</button>
+            <button type="button" data-jog-axis="m2" data-delta="-1" aria-label="M2 left"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M14 6l-6 6 6 6" fill="none" stroke="currentColor" stroke-width="2"/></svg></button>
+            <button type="button" data-jog-axis="m2" data-delta="1" aria-label="M2 right"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M10 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2"/></svg></button>
           </div>
         </div>
 
@@ -43,8 +47,8 @@
           <span class="axis-label">M3</span>
           <span id="m3-value" class="axis-value">—</span>
           <div class="rocker">
-            <button type="button" data-jog-axis="m3" data-delta="-1" aria-label="M3 left">◀</button>
-            <button type="button" data-jog-axis="m3" data-delta="1" aria-label="M3 right">▶</button>
+            <button type="button" data-jog-axis="m3" data-delta="-1" aria-label="M3 left"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M14 6l-6 6 6 6" fill="none" stroke="currentColor" stroke-width="2"/></svg></button>
+            <button type="button" data-jog-axis="m3" data-delta="1" aria-label="M3 right"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M10 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2"/></svg></button>
           </div>
         </div>
       </div>

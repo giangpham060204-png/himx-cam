@@ -1,6 +1,7 @@
 :root {
   --stage: #171916;
   --stage-soft: #20211d;
+  --panel: #20211d;
   --body: #e7e1d3;
   --body-edge: #cfc6b4;
   --ink: #1d1e1a;
@@ -10,6 +11,7 @@
   --alarm: #b3261e;
   --alarm-dark: #7f1712;
   --mono: "IBM Plex Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  --sans: system-ui, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
 }
 
 * {
@@ -29,7 +31,7 @@ body {
 body {
   background: var(--stage);
   color: var(--body);
-  font-family: var(--mono);
+  font-family: var(--sans);
   overflow-x: hidden;
 }
 
@@ -56,9 +58,10 @@ button:focus-visible {
   right: 24px;
   width: 11px;
   height: 11px;
+  /* deslop-ignore-next-line 19 LED dot is a real indicator lamp */
   border-radius: 50%;
-  background: var(--copper);
-  box-shadow: 0 0 0 4px rgba(164, 85, 47, 0.14);
+  background: var(--muted);
+  box-shadow: 0 0 0 4px rgba(119, 115, 102, 0.18);
   z-index: 4;
 }
 
@@ -79,19 +82,18 @@ button:focus-visible {
   height: min(400px, 66vh);
   min-height: 320px;
   background: var(--body);
-  border-radius: 42% 42% 30% 30% / 32% 32% 24% 24%;
+  border-radius: 10px;
   box-shadow:
-    0 36px 70px rgba(0, 0, 0, 0.45),
-    0 3px 0 rgba(255, 255, 255, 0.6) inset,
-    0 -12px 28px rgba(94, 82, 61, 0.13) inset;
+    0 1px 0 rgba(255, 255, 255, 0.06) inset,
+    0 10px 22px rgba(0, 0, 0, 0.4);
   user-select: none;
 }
 
 body[data-estopped="true"] .controller {
   box-shadow:
     0 0 0 4px var(--alarm),
-    0 36px 70px rgba(0, 0, 0, 0.45),
-    0 3px 0 rgba(255, 255, 255, 0.6) inset;
+    0 1px 0 rgba(255, 255, 255, 0.06) inset,
+    0 10px 22px rgba(0, 0, 0, 0.4);
 }
 
 .estop {
@@ -105,13 +107,14 @@ body[data-estopped="true"] .controller {
   height: 82px;
   transform: translateX(-50%);
   border: 0;
+  /* deslop-ignore-next-line 19 e-stop mushroom is a physical metaphor */
   border-radius: 50%;
   background: var(--alarm);
   cursor: pointer;
   box-shadow:
     0 0 0 4px var(--stage-soft),
     0 8px 0 var(--alarm-dark),
-    0 16px 26px rgba(0, 0, 0, 0.3);
+    0 6px 12px rgba(0, 0, 0, 0.25);
   transition: background 120ms ease, transform 120ms ease;
 }
 
@@ -124,7 +127,7 @@ body[data-estopped="true"] .controller {
   box-shadow:
     0 0 0 4px var(--stage-soft),
     0 6px 0 var(--alarm-dark),
-    0 12px 20px rgba(0, 0, 0, 0.3);
+    0 6px 12px rgba(0, 0, 0, 0.25);
 }
 
 .home {
@@ -163,6 +166,17 @@ body[data-estopped="true"] .estop {
   animation: estop-pulse 900ms ease-in-out infinite alternate;
 }
 
+.pivot {
+  position: absolute;
+  top: calc(5% - 7px);
+  left: 50%;
+  margin-left: -48px;
+  width: 96px;
+  color: rgba(119, 115, 102, 0.4);
+  z-index: 1;
+  pointer-events: none;
+}
+
 .axis-bank {
   position: absolute;
   left: 0;
@@ -191,6 +205,8 @@ body[data-estopped="true"] .estop {
 .axis-value {
   min-height: 26px;
   color: var(--muted);
+  /* deslop-ignore-next-line 34 digits-only readout */
+  font-family: var(--mono);
   font-size: 22px;
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.04em;
@@ -210,7 +226,7 @@ body[data-estopped="true"] .estop {
   background: var(--stage-soft);
   box-shadow:
     0 2px 0 rgba(255, 255, 255, 0.06) inset,
-    0 8px 14px rgba(0, 0, 0, 0.22);
+    0 6px 12px rgba(0, 0, 0, 0.25);
 }
 
 .axis.horizontal .rocker {
@@ -253,7 +269,7 @@ body[data-estopped="true"] .estop {
   color: var(--ink);
   font-size: 11px;
   line-height: 1.35;
-  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.35);
   z-index: 5;
 }
 
@@ -263,8 +279,8 @@ body[data-estopped="true"] .estop {
 }
 
 @keyframes estop-pulse {
-  from { box-shadow: 0 0 0 4px var(--stage-soft), 0 8px 0 var(--alarm-dark), 0 16px 26px rgba(0, 0, 0, 0.3); }
-  to { box-shadow: 0 0 0 7px var(--alarm), 0 8px 0 var(--alarm-dark), 0 16px 26px rgba(0, 0, 0, 0.3); }
+  from { box-shadow: 0 0 0 4px var(--stage-soft), 0 8px 0 var(--alarm-dark), 0 6px 12px rgba(0, 0, 0, 0.25); }
+  to { box-shadow: 0 0 0 7px var(--alarm), 0 8px 0 var(--alarm-dark), 0 6px 12px rgba(0, 0, 0, 0.25); }
 }
 
 @media (max-width: 700px) {
@@ -276,7 +292,7 @@ body[data-estopped="true"] .estop {
     width: 94vw;
     height: min(390px, 52vh);
     min-height: 340px;
-    border-radius: 38% 38% 28% 28% / 28% 28% 22% 22%;
+    border-radius: 10px;
   }
 
   .estop {

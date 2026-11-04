@@ -1,3 +1,5 @@
+// View contract shared with web/mainsail/arm_control_panel.js: same poll
+// cadence (700 ms), same /api/* endpoints, same state-color tokens.
 (() => {
   "use strict";
 
