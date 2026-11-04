@@ -2,6 +2,7 @@
 
 import json
 import pathlib
+import re
 import sys
 import threading
 import urllib.error
@@ -306,3 +307,124 @@ def test_status_reports_controlled_stop(web):
 
     assert status == 200
     assert payload["status"]["stop_requested"] is True
+
+
+CORS_ORIGIN = "http://192.168.7.42"
+
+
+@pytest.fixture
+def web_cors():
+    controller = FakeController()
+    state = arm_web.WebState(controller, token="test-token")
+    server = arm_web.build_server(
+        state, host="127.0.0.1", port=0, cors_origins=(CORS_ORIGIN,)
+    )
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base = f"http://127.0.0.1:{server.server_port}"
+    try:
+        yield base
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def _preflight(base, origin=None):
+    headers = {}
+    if origin is not None:
+        headers["Origin"] = origin
+    request = urllib.request.Request(
+        base + "/api/status", method="OPTIONS", headers=headers
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=5) as response:
+            return response.status, dict(response.headers)
+    except urllib.error.HTTPError as exc:
+        return exc.code, json.loads(exc.read())
+
+
+def test_preflight_allows_pinned_origin(web_cors):
+    status, headers = _preflight(web_cors, origin=CORS_ORIGIN)
+
+    assert status == 204
+    assert headers["Access-Control-Allow-Origin"] == CORS_ORIGIN
+    assert "X-Arm-Token" in headers["Access-Control-Allow-Headers"]
+    assert "POST" in headers["Access-Control-Allow-Methods"]
+
+
+def test_preflight_rejects_unpinned_origin(web_cors):
+    status, payload = _preflight(web_cors, origin="http://evil.example")
+
+    assert status == 403
+    assert payload["ok"] is False
+
+
+def test_preflight_without_origin_is_rejected(web_cors):
+    status, payload = _preflight(web_cors)
+
+    assert status == 403
+
+
+def test_api_response_echoes_allowed_origin(web_cors):
+    request = urllib.request.Request(
+        web_cors + "/api/status",
+        headers={"X-Arm-Token": "test-token", "Origin": CORS_ORIGIN},
+    )
+    with urllib.request.urlopen(request, timeout=5) as response:
+        body = json.loads(response.read())
+
+    assert body["ok"] is True
+    assert response.headers["Access-Control-Allow-Origin"] == CORS_ORIGIN
+
+
+def test_api_request_from_unpinned_origin_still_serves(web_cors):
+    request = urllib.request.Request(
+        web_cors + "/api/status",
+        headers={"X-Arm-Token": "test-token", "Origin": "http://evil.example"},
+    )
+    with urllib.request.urlopen(request, timeout=5) as response:
+        body = json.loads(response.read())
+
+    assert body["ok"] is True
+    assert "Access-Control-Allow-Origin" not in response.headers
+
+
+def test_cors_is_off_by_default(web):
+    _, _, base = web
+    request = urllib.request.Request(
+        base + "/api/status",
+        headers={"X-Arm-Token": "test-token", "Origin": CORS_ORIGIN},
+    )
+    with urllib.request.urlopen(request, timeout=5) as response:
+        json.loads(response.read())
+
+    assert "Access-Control-Allow-Origin" not in response.headers
+
+
+def test_show_token_prints_token(capsys):
+    class StoppedServer:
+        daemon_threads = True
+        server_port = 8765
+
+        def __init__(self, state, host, port, cors_origins=()):
+            self.token = state.token
+
+        def serve_forever(self):
+            raise KeyboardInterrupt
+
+        def server_close(self):
+            pass
+
+    code = arm_web.main(
+        ["--show-token"],
+        controller_factory=lambda args: FakeController(),
+        server_factory=StoppedServer,
+    )
+
+    out = capsys.readouterr().out
+    assert code == 0
+    token_line = re.search(r"^arm-web: token (\S+)$", out, re.M)
+    assert token_line is not None, out
+    assert len(token_line.group(1)) >= 20  # token_urlsafe(18) byte length
+    assert out.index("arm-web: http") < out.index("arm-web: token ")

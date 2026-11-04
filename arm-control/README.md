@@ -64,8 +64,15 @@ uv run python arm-control/tools/arm_web.py --open
 The web console binds to `127.0.0.1` by default, uses a per-run token, and
 sends every motion through the same `ArmController` safety layer as the CLI.
 It is a controller surface with M1 up/down, M2 left/right, M3 left/right,
-and an emergency-stop button. Home the arm with the CLI/bench first; there is no home button. The
-physical e-stop remains the primary stop.
+HOME, and an emergency-stop button. HOME is wired to `/api/home`
+(`home_all`); it respects the same guards as the CLI (M2 is never homed
+from an unknown multi-turn cable state). The physical e-stop remains the
+primary stop. Mainsail on the same host is a diagnostics window only
+(console, endstops, logs, configs); it is not used to move the arm — stock
+Mainsail and Fluidd cannot host custom panels (verified against v2.19.0
+sources; see `documentations/mainsail-panel.md`), so the console is the
+single control surface and the panel prototype stays parked in
+`web/mainsail/`.
 
 The default Moonraker URL is `http://127.0.0.1:7125`. The default config is
 `arm-control/src/config/arm.toml`; the serial path in it is a
@@ -78,6 +85,16 @@ expected output, and troubleshooting. Read
 `documentations/simulation-wiring-guide.md` for the combined simulation,
 Pico/TMC2209 wiring, and first-power-up guide. Read
 `documentations/bench-checklist.md` before any real motor test.
+
+## Mainsail diagnostics window
+
+Mainsail is installed on the Moonraker host (see
+`documentations/mainsail-panel.md`, local) and is used read-mostly:
+G-code console (`QUERY_ENDSTOPS`, `MANUAL_STEPPER` probes), Klippy/Moonraker
+logs, MCU info, config editor. Its toolhead control is disabled;
+`manual_stepper` axes are invisible to Moonraker, so Mainsail cannot move
+or read the arm. Arm control lives in this repo's console and (Phase 1)
+the Mainsail arm panel, both talking to `arm_web.py`.
 
 ## Safety
 

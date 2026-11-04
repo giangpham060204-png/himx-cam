@@ -204,6 +204,13 @@ class ArmRequestHandler(BaseHTTPRequestHandler):
     state: WebState
     token: str
     web_dir: Path
+    cors_origins: tuple[str, ...] = ()
+
+    def _cors_origin(self) -> str | None:
+        origin = self.headers.get("Origin", "")
+        if origin and origin in self.cors_origins:
+            return origin
+        return None
 
     server_version = "ArmWeb/1.0"
 
@@ -217,6 +224,10 @@ class ArmRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
+        origin = self._cors_origin()
+        if origin is not None:
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Vary", "Origin")
         self.end_headers()
         self.wfile.write(body)
 
@@ -322,6 +333,23 @@ class ArmRequestHandler(BaseHTTPRequestHandler):
         except Exception as exc:
             self._json({"ok": False, "error": str(exc)}, 500)
 
+    def do_OPTIONS(self) -> None:
+        # Preflights carry no token, so never route through _check_token.
+        origin = self._cors_origin()
+        if origin is None:
+            self._json({"ok": False, "error": "origin not allowed"}, 403)
+            return
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Origin", origin)
+        self.send_header("Vary", "Origin")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header(
+            "Access-Control-Allow-Headers", "Content-Type, X-Arm-Token"
+        )
+        self.send_header("Access-Control-Max-Age", "86400")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+
     def do_GET(self) -> None:
         path = urlparse(self.path).path
         if path.startswith("/api/") and not self._check_token():
@@ -350,6 +378,7 @@ def build_server(
     state: WebState,
     host: str = "127.0.0.1",
     port: int = 8765,
+    cors_origins: tuple[str, ...] = (),
 ) -> ThreadingHTTPServer:
     handler = type(
         "BoundArmRequestHandler",
@@ -358,6 +387,7 @@ def build_server(
             "state": state,
             "token": state.token,
             "web_dir": WEB_DIR,
+            "cors_origins": tuple(cors_origins),
         },
     )
     server = ThreadingHTTPServer((host, port), handler)
@@ -381,9 +411,21 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument(
+        "--cors-origin",
+        action="append",
+        default=[],
+        metavar="URL",
+        help="allow this exact browser origin to call the API (repeatable)",
+    )
+    parser.add_argument(
         "--open",
         action="store_true",
         help="open the console in the default browser",
+    )
+    parser.add_argument(
+        "--show-token",
+        action="store_true",
+        help="print the per-run token for copy/paste into the Mainsail panel",
     )
     return parser
 
@@ -409,6 +451,7 @@ def build_controller(args: argparse.Namespace) -> ArmController:
 def main(
     argv: list[str] | None = None,
     controller_factory=build_controller,
+    server_factory=build_server,
 ) -> int:
     args = build_parser().parse_args(argv)
     controller = controller_factory(args)
@@ -418,9 +461,16 @@ def main(
     except ArmError as exc:
         print(f"arm-web: {exc}; starting offline", file=sys.stderr)
 
-    server = build_server(state, host=args.host, port=args.port)
+    server = server_factory(
+        state,
+        host=args.host,
+        port=args.port,
+        cors_origins=tuple(args.cors_origin),
+    )
     url = f"http://{args.host}:{server.server_port}/"
     print(f"arm-web: {url}")
+    if args.show_token:
+        print(f"arm-web: token {state.token}")
     print("arm-web: physical e-stop remains the primary stop")
     if args.open:
         webbrowser.open(url)
