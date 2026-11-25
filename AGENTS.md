@@ -1,4 +1,43 @@
 
+## Environment / permissions (Nov 2026)
+- This host is a **remote server; the operator is NOT admin**. **Never install anything** (`apt`, `pip --system`, toolchain, SDKs, OTA firmware deps) **without explicit prior approval** — propose the install command and wait.
+- Preferred: project-local, user-space only (`uv`, `thirdparty/` under the repo, `/tmp/opencode`). If a task needs a compiler/SDK that is not present, stop and ask instead of fetching it.
+- **Blast-radius rule:** this machine is shared (docker containers, other users/services, long-running arm stack). Before any command that reaches outside the repo + `/tmp/opencode` + the operator's own processes, stop and ask. This includes: `docker` (any subcommand), `systemctl`/service restarts, `reboot`/`shutdown`, firewall/network changes, mounts, `chmod/chown` outside the repo, `kill`/`pkill` of anything not provably ours (note the `pkill -f` self-match trap below), anything binding a fixed port, large downloads/writes (disk-fill risk), and any `sudo` at all.
+- **Compatibility check:** `klipper-pico`, `moonraker-env`, `mainsail_data/dist` are pinned working trees — no upgrades, checkouts, or rebuilds without approval. Verify commands against the pinned versions in-tree (don't assume upstream docs match).
+
+### Operator desktop (xpra session `:100`)
+- The operator works on this host through an **xpra desktop on `:100`** (`xfce4-session`), attached from their laptop over SSH. Slicer 5.12.3 lives at `~/Downloads/Slicer-5.12.3-linux-amd64/Slicer`.
+- The host also runs a **GNOME session on `:0`**; both share `/run/user/1000/bus`. Its GTK portal opens `:0` with the mutter Xauthority, so portal calls made from `:100` failed with `GDBus.Error:org.gtk.GDBus.UnmappedGError…Failed to open display ":100"`.
+- Fixed 2026-11-16 by restarting `:100` with its own session bus. `dbus-launch` is **not installed**, so xpra is started with `--dbus-launch=/tmp/opencode/dbus-launch-shim.sh` (a 6-line `dbus-daemon --session --fork --print-address` wrapper emitting sh-syntax). The shim lives in `/tmp`; re-create it or move it somewhere permanent before relying on it after a reboot.
+
+## Himx camera Pico / custom UVC firmware (Nov 2026)
+
+### Identity and flashing
+- The **camera Pico** is separate from the arm/Klipper Pico. It now runs the custom `camera_firmware` UVC test build: USB `cafe:4021`, CDC by-id `usb-HimxCam...`, video `/dev/video0`/`/dev/video1`. MicroPython is gone from it.
+- The **arm Pico** is `1d50:614e`, serial `E66164084383A533`, `/dev/ttyACM0`. Never flash or reset it by mistake.
+- Flashing the camera Pico: CDC command `BOOTSEL` -> `RPI-RP2`; mount with `DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus gio mount -d /dev/sda1`; copy the UF2 to `/media/commongdc/RPI-RP2`; `sync`. `udisksctl mount` alone fails (polkit has no TTY). No sudo.
+
+### Blocking I2C hazard (learned the hard way)
+- `i2c_read_blocking()` has **no timeout**. On a floating, absent, or stuck bus it can wedge the main loop forever. Symptom: the UVC device still enumerates, but CDC and video stop responding.
+- Always use a bounded call: `i2c_read_timeout_per_char_us(..., 1000)` or `i2c_read_blocking_until(...)`. Never scan a floating bus with the blocking variant.
+- Build camera firmware with a watchdog: `watchdog_enable(5000, 1)` and `watchdog_update()` in the main loop. A future hang then reboots the Pico instead of requiring physical access.
+- **Recovery if the firmware is wedged:** one USB unplug/replug of the camera Pico (no BOOTSEL needed) restarts it. `usbreset`, USB `authorized` toggles, and hub sysfs do **not** reboot the RP2040. After replug, use CDC `BOOTSEL` to flash the fixed UF2.
+
+### Wiring findings
+- The safe `LINES` CDC command measures GPIO capacitance with the cameras in standby; it does not stream and does not enable camera outputs.
+- The as-built harness now uses a **TCA9548A I2C mux** at address **0x70** on **GP0/GP1**. Cameras are on mux channels **0, 1, 2** and each answers at `0x24` when its channel is selected. This is the preferred design: per-camera configuration is possible.
+- Camera signal map (D0, PCLK, HREF, VSYNC in that order):
+  - Camera 1: **GP4, GP5, GP6, GP7**
+  - Camera 2: **GP8, GP9, GP10, GP11**
+  - Camera 3: **GP12, GP13, GP14, GP15**
+  - No shared HREF/VSYNC.
+- Last `LINES` check (2026-11-12, after a USB replug): all three mux channels 0/1/2 answer `0x24` and read model-id `0x01B0` (`MUXCH0/1/2`). Camera 3 init + stream works (`CAM3`, `cam3=1`); its tile is currently black. Wiring: Cameras 2 and 3 complete; **Camera 1 is missing HREF GP6**. Wiring has moved between checks — re-run `LINES` before trusting an image.
+- Firmware now initialises cameras 2 and 3 at boot and fills a tile with video black when its camera is not streaming (`PATTERN 1` restores the diagnostic pattern). Slicer side: module button **Connect real cameras** starts `tools/camera_stream.py --device-tiled /dev/video0` if needed, then connects c1/c2/c3; a missing device streams black.
+- The old "channel 2 hangs" symptom was stale mux/bus state from a firmware reset, not a faulty camera. A firmware reset never power-cycles the mux/cameras; only unplugging the camera Pico's USB does.
+- The earlier shared-HREF/VSYNC GP15/GP16 wiring is obsolete; the mux design replaces it.
+- Do not use the `temp/Cams brief set up.pdf` wiring/code as-is: it is a Google Search AI answer, not official Arducam documentation. Its shared HREF/VSYNC and PIO pseudo-code are not a working three-camera design.
+- Files: `camera_firmware/PLAN.md` (design/plan), `camera_firmware/BUILD_LOG.md` (build/flash/diagnostic records). Toolchain: `thirdparty/toolchain/...`; SDK: `thirdparty/pico-sdk-1.5.1`; TinyUSB pinned to `5ce60c5`.
+
 ## Pico/USB/STM32/RP2040 + Klipper safety notes (Nov 2026)
 
 ### TMC2209 config crash wedge

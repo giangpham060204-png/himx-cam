@@ -38,3 +38,10 @@ printer_data/*
 # Same policy as printer_data: only the start/stop scripts are versioned.
 mainsail_data/*
 !mainsail_data/*.sh
+
+# Local toolchains and reference material (large; not part of the code history)
+thirdparty/
+temp/
+
+# Agent workspace (machine-local)
+.opencode/
