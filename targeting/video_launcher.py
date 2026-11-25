@@ -60,6 +60,36 @@ def build_command(video_files, *, calibration=None, truth=None, fps=8.0,
     return command
 
 
+def build_device_command(device, *, resize=True, fps=5.0, port=18944,
+                        uv="uv"):
+    """The sender command for one UVC device carrying the three camera tiles.
+
+    The device is not required to exist: the sender falls back to black frames
+    so Slicer still binds c1/c2/c3 when a camera is missing.
+    """
+    text = str(device or "").strip()
+    if not text:
+        raise LauncherError("choose a camera device, e.g. /dev/video0")
+    try:
+        rate = float(fps)
+    except (TypeError, ValueError):
+        raise LauncherError("fps must be a number") from None
+    if not math.isfinite(rate) or rate <= 0:
+        raise LauncherError("fps must be greater than zero")
+    try:
+        port_number = int(port)
+    except (TypeError, ValueError):
+        raise LauncherError("port must be a whole number") from None
+    if not 1 <= port_number <= 65535:
+        raise LauncherError("port must be between 1 and 65535")
+
+    command = [str(uv), "run", "tools/camera_stream.py", "--device-tiled",
+               text, "--fps", f"{rate:g}", "--port", str(port_number)]
+    if resize:
+        command.append("--resize")
+    return command
+
+
 class VideoProcess:
     """One external sender process, with a log and a clean stop."""
 

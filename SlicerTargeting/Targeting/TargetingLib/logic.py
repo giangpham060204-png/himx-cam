@@ -48,6 +48,7 @@ from targeting.video_launcher import (  # noqa: E402
     LauncherError,
     VideoProcess,
     build_command,
+    build_device_command,
 )
 
 LOGS_DIR = PROJECT_ROOT / "logs"
@@ -61,6 +62,13 @@ PROBE_NODE_NAME = "SandboxProbe"
 PROBE_COLOUR = (0.85, 0.1, 0.85)
 PROBE_WRITE_INTERVAL_MS = 150
 CAMERA_VIEWS = ("Red", "Green", "Yellow")
+
+# One display window for all three camera volumes. Auto window/level chooses a
+# different stretch per camera, so a featureless tile (a few counts of sensor
+# noise) gets blown up into full-scale speckle while a tile with a lamp looks
+# normal. 16 is the sensor's black level; 64 covers a normally lit scene.
+CAMERA_WINDOW = 64.0
+CAMERA_LEVEL = 48.0
 FRAMES_FOLDER = LOGS_DIR / "camera-frames"
 STREAM_CONNECTOR_NAME = "CameraStreamConnector"
 STREAM_PORT = 18944
@@ -1023,6 +1031,25 @@ class TargetingLogic(ScriptedLoadableModuleLogic):
         self._video = process
         return process.start()
 
+    def start_real_cameras(self, device="/dev/video0", resize=True, fps=5.0):
+        """Start the Pico camera sender unless it is already running.
+
+        The sender reads one UVC device carrying the three tiles and falls back
+        to black frames when the device is absent, so c1/c2/c3 always exist.
+        """
+        if self._video is not None:
+            status = self._video.poll()
+            if status.get("status") == "running":
+                return status
+            self._video.stop()
+        command = build_device_command(
+            device, resize=resize, fps=fps, port=self._stream_port,
+            uv=self._uv_executable())
+        process = VideoProcess(
+            command, cwd=PROJECT_ROOT, log_path=VIDEO_LOG_FILE)
+        self._video = process
+        return process.start()
+
     def stop_video(self):
         """Stop the external sender, if this module started one."""
         if self._video is None:
@@ -1933,6 +1960,14 @@ class TargetingLogic(ScriptedLoadableModuleLogic):
         """Put three scalar volumes into the three camera slice views."""
         views = {}
         for widget_name, node in zip(CAMERA_VIEWS, nodes):
+            display = node.GetDisplayNode()
+            if display is None:
+                display = slicer.mrmlScene.AddNewNodeByClass(
+                    "vtkMRMLScalarVolumeDisplayNode")
+                node.SetAndObserveDisplayNodeID(display.GetID())
+            display.SetAutoWindowLevel(0)
+            display.SetWindowLevel(CAMERA_WINDOW, CAMERA_LEVEL)
+
             widget = slicer.app.layoutManager().sliceWidget(widget_name)
             widget.mrmlSliceNode().SetOrientationToAxial()
             composite = widget.sliceLogic().GetSliceCompositeNode()

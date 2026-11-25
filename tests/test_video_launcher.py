@@ -17,6 +17,7 @@ from targeting.video_launcher import (  # noqa: E402
     LauncherError,
     VideoProcess,
     build_command,
+    build_device_command,
     validate_video_files,
 )
 
@@ -108,3 +109,35 @@ def test_an_exited_sender_reports_its_code_and_log_tail(tmp_path):
     assert status["status"] == "exited"
     assert status["returncode"] == 7
     assert "sender says hi" in status["log_tail"]
+
+
+def test_the_device_command_reads_the_tiled_stream():
+    command = build_device_command("/dev/video0", fps=5, port=18944)
+
+    assert command[2] == "tools/camera_stream.py"
+    assert command[3:5] == ["--device-tiled", "/dev/video0"]
+    assert "--resize" in command
+    assert command[command.index("--fps") + 1] == "5"
+    assert command[command.index("--port") + 1] == "18944"
+
+
+def test_the_device_command_does_not_require_the_device_to_exist():
+    # A missing camera must stream black, not stop the sender from starting.
+    command = build_device_command("/dev/definitely-not-a-camera")
+    assert "/dev/definitely-not-a-camera" in command
+
+
+def test_the_device_command_refuses_an_empty_device():
+    with pytest.raises(LauncherError, match="camera device"):
+        build_device_command("  ")
+
+
+def test_the_device_command_refuses_a_bad_rate_and_port():
+    with pytest.raises(LauncherError, match="fps"):
+        build_device_command("/dev/video0", fps=0)
+    with pytest.raises(LauncherError, match="port"):
+        build_device_command("/dev/video0", port=70000)
+
+
+def test_the_device_command_can_skip_resize():
+    assert "--resize" not in build_device_command("/dev/video0", resize=False)

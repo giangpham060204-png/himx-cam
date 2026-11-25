@@ -12,6 +12,7 @@ calibration and real hardware measures it; both hand over the same shape.
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -151,3 +152,92 @@ class CameraSource:
                     f"{expected}; rescale the stream or fix the optics"
                 )
         return grey
+
+
+class TiledDevice:
+    """One UVC device carrying several camera tiles side by side.
+
+    The three-camera Pico exposes a single 480x120 stream: camera 1 in the
+    left third, camera 2 in the middle, camera 3 on the right. One capture
+    object is shared so the device is never opened three times, and a frame
+    grabbed for one tile is reused by the other two within the same cycle.
+
+    Drive it from tools/camera_stream.py with ``--device-tiled /dev/video0``.
+    """
+
+    def __init__(self, device, reuse_s=0.05):
+        self.device = device
+        self.reuse_s = float(reuse_s)
+        self.capture = None
+        self._frame = None
+        self._grabbed_at = 0.0
+
+    def open(self):
+        """Open the device now; return False instead of raising when absent."""
+        if self.capture is not None:
+            return True
+        capture = cv2.VideoCapture(self.device)
+        if not capture.isOpened():
+            capture.release()
+            return False
+        self.capture = capture
+        return True
+
+    def latest(self):
+        now = time.monotonic()
+        if self._frame is not None and (now - self._grabbed_at) <= self.reuse_s:
+            return self._frame
+        if self.capture is None:
+            self.capture = cv2.VideoCapture(self.device)
+            if not self.capture.isOpened():
+                self.capture = None
+                raise RuntimeError(f"no camera at {self.device!r}")
+        ok, frame = self.capture.read()
+        if not ok:
+            raise RuntimeError(f"the camera at {self.device!r} gave no frame")
+        self._frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        self._grabbed_at = now
+        return self._frame
+
+
+class BlankSource:
+    """A black frame, for a camera that is not there.
+
+    Slicer must still get three images so the view binding never waits on a
+    camera that will not appear; a missing device therefore streams black
+    instead of failing the whole sender.
+    """
+
+    def __init__(self, optics):
+        self.optics = optics
+
+    def grab(self):
+        return np.zeros((self.optics.pixels_y, self.optics.pixels_x), np.uint8)
+
+
+class TiledSource:
+    """One tile of a TiledDevice stream, shaped like any other FrameSource."""
+
+    def __init__(self, device, tile, optics, tiles=3, resize=False):
+        self.device = device
+        self.tile = int(tile)
+        self.tiles = int(tiles)
+        self.optics = optics
+        self.resize = bool(resize)
+
+    def grab(self):
+        grey = self.device.latest()
+        tile_width = grey.shape[1] // self.tiles
+        x0 = self.tile * tile_width
+        tile = grey[:, x0:x0 + tile_width]
+        expected = (self.optics.pixels_y, self.optics.pixels_x)
+        if tile.shape != expected:
+            if self.resize:
+                tile = cv2.resize(
+                    tile, (self.optics.pixels_x, self.optics.pixels_y),
+                    interpolation=cv2.INTER_LINEAR)
+            else:
+                raise RuntimeError(
+                    f"tile {self.tile} of {self.device.device!r} is {tile.shape}, "
+                    f"but the camera is {expected}; pass --resize or fix the optics")
+        return tile

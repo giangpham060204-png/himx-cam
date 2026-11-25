@@ -31,6 +31,11 @@ Future UVC cameras (Pico HM01B0 at 160x120 needs ``--resize``):
     uv run tools/camera_stream.py --devices /dev/video0 /dev/video2 /dev/video4 \
         --resize --calibration path/to/camera-rig.json
 
+One UVC device carrying the three cameras side by side (the three-camera Pico
+exposes a single 480x120 stream: c1 | c2 | c3):
+
+    uv run tools/camera_stream.py --device-tiled /dev/video0 --resize --fps 5
+
 Slicer side: install SlicerOpenIGTLink, press *Connect camera stream*, then
 click the same fixed target once in each view. The video keeps playing while
 the clicks are solved; press *Pause stream* first when the target, a camera, or
@@ -603,6 +608,9 @@ def build_parser():
     )
     parser.add_argument("--devices", nargs="+", default=None,
                         help="three UVC device indices/paths; overrides the video source")
+    parser.add_argument("--device-tiled", default=None, metavar="DEVICE",
+                        help="one UVC device carrying three side-by-side tiles, "
+                             "e.g. /dev/video0 from the 3-camera Pico")
     parser.add_argument("--resize", action="store_true",
                         help="resize a smaller UVC stream (Pico 160x120) to the optics size")
     parser.add_argument("--calibration", default=None,
@@ -670,7 +678,24 @@ def main(argv=None):
             return 1
 
     try:
-        if args.devices:
+        if args.device_tiled:
+            tiled = frame_sources.TiledDevice(args.device_tiled)
+            if tiled.open():
+                sources = [frame_sources.TiledSource(tiled, index, optics,
+                                                     resize=args.resize)
+                           for index in range(3)]
+                source_label = "tiled device " + str(args.device_tiled)
+            else:
+                # Keep the three views bound: a missing camera shows black.
+                sources = [frame_sources.BlankSource(optics) for _ in range(3)]
+                source_label = ("no camera at " + str(args.device_tiled)
+                                + " (sending black)")
+                print(f"warning: no camera at {args.device_tiled}; "
+                      "sending black frames so Slicer still shows the views",
+                      file=sys.stderr)
+            factory = None
+            loop = False
+        elif args.devices:
             if len(args.devices) != 3:
                 raise ValueError("--devices needs exactly three cameras")
             sources = [frame_sources.CameraSource(device, optics,

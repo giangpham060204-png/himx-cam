@@ -167,3 +167,55 @@ def test_a_camera_record_carries_the_calibration_with_the_frames():
 
     assert record.projection.shape == (3, 4)
     assert record.source.grab().shape == (OPTICS.pixels_y, OPTICS.pixels_x)
+
+
+class _FakeTiledDevice:
+    """Stands in for one UVC device carrying three side-by-side tiles."""
+
+    def __init__(self, frame):
+        self.frame = frame
+        self.device = "/dev/fake-tiled"
+
+    def latest(self):
+        return self.frame
+
+
+def _a_tiled_stream():
+    stream = np.zeros((120, 480), np.uint8)
+    stream[:, 0:160] = 10
+    stream[:, 160:320] = 20
+    stream[:, 320:480] = 30
+    return stream
+
+
+def test_a_tiled_device_hands_each_camera_its_own_third():
+    device = _FakeTiledDevice(_a_tiled_stream())
+
+    tiles = [frame_sources.TiledSource(device, index, OPTICS, resize=True).grab()
+             for index in range(3)]
+
+    assert [int(tile.mean()) for tile in tiles] == [10, 20, 30]
+
+
+def test_tiles_are_resized_to_the_optics_or_refused():
+    device = _FakeTiledDevice(_a_tiled_stream())
+
+    resized = frame_sources.TiledSource(device, 2, OPTICS, resize=True).grab()
+    assert resized.shape == (OPTICS.pixels_y, OPTICS.pixels_x)
+
+    with pytest.raises(RuntimeError, match="pass --resize"):
+        frame_sources.TiledSource(device, 2, OPTICS).grab()
+
+
+def test_a_blank_source_is_video_black_of_the_optics_size():
+    frame = frame_sources.BlankSource(OPTICS).grab()
+
+    assert frame.shape == (OPTICS.pixels_y, OPTICS.pixels_x)
+    assert frame.dtype == np.uint8
+    assert frame.max() == 0
+
+
+def test_opening_a_missing_tiled_device_reports_false_instead_of_raising():
+    device = frame_sources.TiledDevice("/dev/definitely-not-a-camera")
+
+    assert device.open() is False
