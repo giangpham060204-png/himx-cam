@@ -33,17 +33,6 @@ from TargetingLib.logic import (  # noqa: E402
     TargetingLogic,
     ThreeDViewClickFilter,
 )
-from targeting import beef_demo  # noqa: E402
-from targeting.video_launcher import (  # noqa: E402
-    LauncherError,
-    validate_video_files,
-)
-
-DOWNLOADED_FOLDER = PROJECT_ROOT / "data" / "multiview-beef"
-SYNTHETIC_FOLDER = PROJECT_ROOT / "logs" / "synthetic-videos"
-BEEF_DEMO_FOLDER = PROJECT_ROOT / "logs" / "beef-demo"
-BEEF_DEMO_CALIBRATION = BEEF_DEMO_FOLDER / "camera-rig.json"
-VIDEO_NAMES = ("cam00_320.mp4", "cam11_320.mp4", "cam20_320.mp4")
 
 
 class Targeting(ScriptedLoadableModule):
@@ -82,92 +71,47 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
         form = qt.QFormLayout(panel)
 
         self.statusLabel = qt.QLabel(
-            "Connect the camera stream, then tick Camera view clicks and "
-            "click the same point once in each camera view.")
+            "Connect the real cameras, then declare the marker plate below. "
+            "Apply draws it in the cube and checks it against camera 1.")
         self.statusLabel.wordWrap = True
         form.addRow(self.statusLabel)
 
-        self.cameraBox = qt.QCheckBox("Camera view clicks: one per view")
-        self.cameraBox.toolTip = (
-            "The video keeps playing while you click. A click moves that "
-            "camera's mark to the pressed pixel immediately. Ctrl+drag pans "
-            "a camera view or rotates the 3D view without placing a mark. "
-            "Use a fixed target; Pause stream if the target, a camera, or an "
-            "occluder can move.")
-        form.addRow(self.cameraBox)
+        # The camera-click (triangulation) controls moved to Advanced: the
+        # marker plate is the workflow in use.
 
-        self.cameraLabel = qt.QLabel("no camera views loaded")
-        self.cameraLabel.wordWrap = True
-        form.addRow(self.cameraLabel)
+        real = qt.QHBoxLayout()
+        self.realCameraButton = qt.QPushButton("Connect real cameras")
+        self.realCameraButton.toolTip = (
+            "Start the Pico camera sender if it is not already running, then "
+            "connect c1/c2/c3. A camera that is missing shows black")
+        self.realCameraStopButton = qt.QPushButton("Stop real cameras")
+        self.realCameraStopButton.setEnabled(False)
+        real.addWidget(self.realCameraButton)
+        real.addWidget(self.realCameraStopButton)
+        form.addRow(real)
 
-        camera = qt.QHBoxLayout()
-        self.clearCameraButton = qt.QPushButton("Clear camera clicks")
-        self.clearCameraButton.toolTip = (
-            "Clear the three clicks, the solved point, rays and predicted pixels")
-        camera.addWidget(self.clearCameraButton)
-        form.addRow(camera)
+        self.realCameraDeviceEdit = qt.QLineEdit("/dev/video0")
+        self.realCameraDeviceEdit.toolTip = (
+            "UVC device carrying the three camera tiles (480x120: c1 | c2 | c3)")
+        form.addRow("camera device:", self.realCameraDeviceEdit)
 
-        self.rayGuideLabel = qt.QLabel("ray guide: click a camera view")
-        self.rayGuideLabel.wordWrap = True
-        form.addRow(self.rayGuideLabel)
-
-        stream = qt.QHBoxLayout()
-        self.connectStreamButton = qt.QPushButton("Connect camera stream")
-        self.disconnectStreamButton = qt.QPushButton("Disconnect stream")
-        stream.addWidget(self.connectStreamButton)
-        stream.addWidget(self.disconnectStreamButton)
-        form.addRow(stream)
-
-        video = qt.QHBoxLayout()
-        self.startVideoButton = qt.QPushButton("Start video\u2026")
-        self.startVideoButton.toolTip = (
-            "Choose three clips and start the external sender")
-        self.stopVideoButton = qt.QPushButton("Stop video")
-        self.stopVideoButton.setEnabled(False)
-        video.addWidget(self.startVideoButton)
-        video.addWidget(self.stopVideoButton)
-        form.addRow(video)
-
-        self.videoLabel = qt.QLabel("video: off")
+        # Mock-video controls (Start video..., clip pickers, presets) are gone:
+        # the rig streams from the real Pico cameras. The status label stays
+        # because it also reports the camera sender.
+        self.videoLabel = qt.QLabel("cameras: off")
         self.videoLabel.wordWrap = True
         form.addRow(self.videoLabel)
 
         self.videoSettings = ctk.ctkCollapsibleButton()
-        self.videoSettings.text = "Video settings"
+        self.videoSettings.text = "Camera settings"
         self.videoSettings.collapsed = False
         form.addRow(self.videoSettings)
         video_form = qt.QFormLayout(self.videoSettings)
 
-        presets = qt.QHBoxLayout()
-        self.downloadedVideoButton = qt.QPushButton("Downloaded")
-        self.downloadedVideoButton.toolTip = (
-            "The downloaded beef clips; video only, no calibration")
-        self.syntheticVideoButton = qt.QPushButton("Synthetic")
-        self.syntheticVideoButton.toolTip = (
-            "The synthetic clips with their calibrated rig and truth")
-        self.beefVideoButton = qt.QPushButton("Beef demo")
-        self.beefVideoButton.toolTip = (
-            "The downloaded beef clips with an estimated demo calibration")
-        presets.addWidget(self.downloadedVideoButton)
-        presets.addWidget(self.syntheticVideoButton)
-        presets.addWidget(self.beefVideoButton)
-        video_form.addRow("Presets", presets)
-
-        self.c1Edit = self._video_file_row(
-            video_form, "C1 video", "Videos (*.mp4 *.avi *.mov *.mkv)")
-        self.c2Edit = self._video_file_row(
-            video_form, "C2 video", "Videos (*.mp4 *.avi *.mov *.mkv)")
-        self.c3Edit = self._video_file_row(
-            video_form, "C3 video", "Videos (*.mp4 *.avi *.mov *.mkv)")
-        self.calibrationEdit = self._video_file_row(
-            video_form, "Calibration", "JSON (*.json);;All files (*)")
-        self.truthEdit = self._video_file_row(
-            video_form, "Truth", "JSON (*.json);;All files (*)")
-
         self.fpsSpin = qt.QDoubleSpinBox()
         self.fpsSpin.setRange(1.0, 60.0)
         self.fpsSpin.setDecimals(1)
-        self.fpsSpin.setValue(8.0)
+        self.fpsSpin.setValue(5.0)
         self.fpsSpin.setSuffix(" fps")
         video_form.addRow("Frame rate", self.fpsSpin)
 
@@ -193,24 +137,145 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
         self.streamLabel.wordWrap = True
         form.addRow(self.streamLabel)
 
-        self.truthLabel = qt.QLabel("camera result: no measurement yet")
-        self.truthLabel.wordWrap = True
-        form.addRow(self.truthLabel)
-
-        self.cameraPixelNote = qt.QLabel("")
-        self.cameraPixelNote.wordWrap = True
-        form.addRow(self.cameraPixelNote)
-
         log_row = qt.QHBoxLayout()
         self.openLogButton = qt.QPushButton("Open log folder")
         log_row.addWidget(self.openLogButton)
         form.addRow(log_row)
+
+        # -- the marker plate -------------------------------------------
+        # Everything the markers need, so the JSON never has to be edited by
+        # hand: size, placement, one row per marker, apply/save/load.
+        self.markerPanel = ctk.ctkCollapsibleButton()
+        self.markerPanel.text = "Marker plate"
+        self.markerPanel.collapsed = False
+        form.addRow(self.markerPanel)
+        marker_form = qt.QFormLayout(self.markerPanel)
+
+        size_row = qt.QHBoxLayout()
+        self.markerWidthSpin = qt.QDoubleSpinBox()
+        self.markerWidthSpin.setRange(1.0, 1000.0)
+        self.markerWidthSpin.setDecimals(2)
+        self.markerWidthSpin.setValue(60.0)
+        self.markerWidthSpin.setSuffix(" mm")
+        self.markerHeightSpin = qt.QDoubleSpinBox()
+        self.markerHeightSpin.setRange(1.0, 1000.0)
+        self.markerHeightSpin.setDecimals(2)
+        self.markerHeightSpin.setValue(40.0)
+        self.markerHeightSpin.setSuffix(" mm")
+        size_row.addWidget(qt.QLabel("width"))
+        size_row.addWidget(self.markerWidthSpin)
+        size_row.addWidget(qt.QLabel("height"))
+        size_row.addWidget(self.markerHeightSpin)
+        marker_form.addRow("plate size", size_row)
+
+        origin_row = qt.QHBoxLayout()
+        self.markerOriginXSpin = qt.QDoubleSpinBox()
+        self.markerOriginYSpin = qt.QDoubleSpinBox()
+        self.markerOriginZSpin = qt.QDoubleSpinBox()
+        for spin, value in ((self.markerOriginXSpin, 20.0),
+                            (self.markerOriginYSpin, 30.0),
+                            (self.markerOriginZSpin, 0.0)):
+            spin.setRange(-1000.0, 1000.0)
+            spin.setDecimals(2)
+            spin.setValue(value)
+            spin.setSuffix(" mm")
+        origin_row.addWidget(qt.QLabel("x"))
+        origin_row.addWidget(self.markerOriginXSpin)
+        origin_row.addWidget(qt.QLabel("y"))
+        origin_row.addWidget(self.markerOriginYSpin)
+        origin_row.addWidget(qt.QLabel("z"))
+        origin_row.addWidget(self.markerOriginZSpin)
+        marker_form.addRow("cube origin", origin_row)
+
+        self.markerTable = qt.QTableWidget(0, 4)
+        self.markerTable.setHorizontalHeaderLabels(
+            ["label", "x mm", "y mm", "z mm"])
+        try:
+            self.markerTable.horizontalHeader().setSectionResizeMode(
+                0, qt.QHeaderView.Stretch)
+        except Exception:  # noqa: BLE001 - older Qt spelling
+            self.markerTable.horizontalHeader().setStretchLastSection(True)
+        for column in (1, 2, 3):
+            self.markerTable.setColumnWidth(column, 66)
+        self.markerTable.verticalHeader().setVisible(False)
+        self.markerTable.setMinimumHeight(180)
+        self.markerTable.toolTip = (
+            "Plate millimetres, origin at the plate's lower-left corner. "
+            "MarkerClicks points are matched to these rows by order, so click "
+            "in the same order the rows are listed. z is optional.")
+        marker_form.addRow(self.markerTable)
+
+        marker_buttons = qt.QHBoxLayout()
+        self.markerAddButton = qt.QPushButton("Add")
+        self.markerRemoveButton = qt.QPushButton("Remove")
+        self.markerApplyButton = qt.QPushButton("Apply to cube")
+        self.markerAddButton.toolTip = "Append one marker row"
+        self.markerRemoveButton.toolTip = "Remove the selected row"
+        self.markerApplyButton.toolTip = (
+            "Draw the plate in the cube and check it against camera 1")
+        marker_buttons.addWidget(self.markerAddButton)
+        marker_buttons.addWidget(self.markerRemoveButton)
+        marker_buttons.addWidget(self.markerApplyButton)
+        marker_form.addRow(marker_buttons)
+
+        marker_file_row = qt.QHBoxLayout()
+        self.markerSaveButton = qt.QPushButton("Save")
+        self.markerLoadButton = qt.QPushButton("Load")
+        self.markerSaveButton.toolTip = "Write marker-plate.json"
+        self.markerLoadButton.toolTip = "Read marker-plate.json into the table"
+        marker_file_row.addWidget(self.markerSaveButton)
+        marker_file_row.addWidget(self.markerLoadButton)
+        marker_form.addRow(marker_file_row)
+
+        self.markerStatusLabel = qt.QLabel("markers: not applied")
+        self.markerStatusLabel.wordWrap = True
+        marker_form.addRow(self.markerStatusLabel)
 
         self.advancedPanel = ctk.ctkCollapsibleButton()
         self.advancedPanel.text = "Advanced"
         self.advancedPanel.collapsed = True
         form.addRow(self.advancedPanel)
         advanced = qt.QFormLayout(self.advancedPanel)
+
+        # The old triangulation controls, kept out of the way.
+        self.cameraBox = qt.QCheckBox("Camera view clicks: one per view")
+        self.cameraBox.toolTip = (
+            "The video keeps playing while you click. A click moves that "
+            "camera's mark to the pressed pixel immediately. Ctrl+drag pans "
+            "a camera view or rotates the 3D view without placing a mark. "
+            "Use a fixed target; Pause stream if the target, a camera, or an "
+            "occluder can move.")
+        advanced.addRow(self.cameraBox)
+
+        self.cameraLabel = qt.QLabel("no camera views loaded")
+        self.cameraLabel.wordWrap = True
+        advanced.addRow(self.cameraLabel)
+
+        camera = qt.QHBoxLayout()
+        self.clearCameraButton = qt.QPushButton("Clear camera clicks")
+        self.clearCameraButton.toolTip = (
+            "Clear the three clicks, the solved point, rays and predicted pixels")
+        camera.addWidget(self.clearCameraButton)
+        advanced.addRow(camera)
+
+        self.rayGuideLabel = qt.QLabel("ray guide: click a camera view")
+        self.rayGuideLabel.wordWrap = True
+        advanced.addRow(self.rayGuideLabel)
+
+        stream = qt.QHBoxLayout()
+        self.connectStreamButton = qt.QPushButton("Connect camera stream")
+        self.disconnectStreamButton = qt.QPushButton("Disconnect stream")
+        stream.addWidget(self.connectStreamButton)
+        stream.addWidget(self.disconnectStreamButton)
+        advanced.addRow(stream)
+
+        self.truthLabel = qt.QLabel("camera result: no measurement yet")
+        self.truthLabel.wordWrap = True
+        advanced.addRow(self.truthLabel)
+
+        self.cameraPixelNote = qt.QLabel("")
+        self.cameraPixelNote.wordWrap = True
+        advanced.addRow(self.cameraPixelNote)
 
         self.pickBox = qt.QCheckBox("Pick targets (clicks in Red/Green/Yellow)")
         advanced.addRow(self.pickBox)
@@ -298,14 +363,8 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
         self.loadCameraViewsButton.clicked.connect(
             lambda _checked=False: self.onLoadCameraViews())
         self.clearCameraButton.clicked.connect(self.onClearCameraClicks)
-        self.startVideoButton.clicked.connect(self.onStartVideo)
-        self.stopVideoButton.clicked.connect(self.onStopVideo)
-        self.downloadedVideoButton.clicked.connect(
-            self._preset_downloaded_video)
-        self.syntheticVideoButton.clicked.connect(
-            self._preset_synthetic_video)
-        self.beefVideoButton.clicked.connect(self._preset_beef_video)
-        self.calibrationEdit.textChanged.connect(self._refresh_video_note)
+        self.realCameraButton.clicked.connect(self.onConnectRealCameras)
+        self.realCameraStopButton.clicked.connect(self.onStopRealCameras)
         self.connectStreamButton.clicked.connect(
             lambda _checked=False: self.onConnectCameraStream())
         self.disconnectStreamButton.clicked.connect(
@@ -317,10 +376,11 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
         self.resumeStreamButton.clicked.connect(
             lambda _checked=False: self.onResumeCameraStream())
         self.spawnButton.clicked.connect(self.on_spawn)
-
-        self._preset_beef_video()
-        if not BEEF_DEMO_CALIBRATION.is_file():
-            self._preset_downloaded_video()
+        self.markerAddButton.clicked.connect(self.onMarkerAdd)
+        self.markerRemoveButton.clicked.connect(self.onMarkerRemove)
+        self.markerApplyButton.clicked.connect(self.onMarkerApply)
+        self.markerSaveButton.clicked.connect(self.onMarkerSave)
+        self.markerLoadButton.clicked.connect(self.onMarkerLoad)
 
         self.layout.addStretch(1)
 
@@ -329,6 +389,10 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
     def enter(self):
         self.install_filters()
         self.refresh_status()
+        # First entry fills the table; returning to the module must not throw
+        # away edits the operator has not saved yet.
+        if self.markerTable.rowCount == 0:
+            self._load_marker_panel()
         try:
             status = self.logic.camera_stream_status()
         except Exception:
@@ -343,7 +407,7 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
         except Exception:
             video = {"status": "off", "message": "video: off"}
         self.videoLabel.text = video["message"]
-        self.stopVideoButton.setEnabled(video["status"] == "running")
+        self.realCameraStopButton.setEnabled(video["status"] == "running")
         if status["status"] in ("waiting", "connected", "disconnected"):
             self._watch_stream_label()
 
@@ -366,7 +430,7 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
             self.videoLabel.text = f"video: could not stop: {exc}"
             return
         self.videoLabel.text = result["message"]
-        self.stopVideoButton.setEnabled(False)
+        self.realCameraStopButton.setEnabled(False)
 
     def _mouse_target(self, view_widget):
         """The widget that actually receives mouse events in a slice view.
@@ -772,144 +836,157 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
         self.cameraPixelNote.text = ""
         self._refresh_camera_pixel_fields()
 
+    # -- the marker plate -------------------------------------------------
+
+    def _load_marker_panel(self):
+        """Fill the table from marker-plate.json, quietly when it is absent."""
+        from targeting.marker_plate import load_plate
+
+        try:
+            plate = load_plate()
+        except RuntimeError as exc:
+            self.markerStatusLabel.text = f"markers: {exc}"
+            return
+        self._fill_marker_table(plate)
+        self.markerStatusLabel.text = (
+            f"markers: {len(plate['markers'])} loaded from {plate['path']} "
+            f"(not applied)")
+
+    def _fill_marker_table(self, plate):
+        """Show a validated plate in the panel fields."""
+        self.markerTable.setRowCount(0)
+        for marker in plate["markers"]:
+            row = self.markerTable.rowCount
+            self.markerTable.insertRow(row)
+            self.markerTable.setItem(row, 0, qt.QTableWidgetItem(marker["label"]))
+            for column, value in ((1, marker["mm"][0]),
+                                  (2, marker["mm"][1]),
+                                  (3, marker["z"])):
+                self.markerTable.setItem(
+                    row, column, qt.QTableWidgetItem(f"{value:g}"))
+        self.markerWidthSpin.value = plate["width"]
+        self.markerHeightSpin.value = plate["height"]
+        (self.markerOriginXSpin.value, self.markerOriginYSpin.value,
+         self.markerOriginZSpin.value) = plate["origin"]
+
+    def _plate_from_panel(self):
+        """The panel as a validated plate, refusing by row and column."""
+        from targeting.marker_plate import validate_plate
+
+        markers = []
+        for row in range(self.markerTable.rowCount):
+            label_item = self.markerTable.item(row, 0)
+            label = label_item.text().strip() if label_item is not None else ""
+            if not label:
+                raise RuntimeError(f"row {row + 1} has no label")
+            values = []
+            for column, name in ((1, "x"), (2, "y"), (3, "z")):
+                item = self.markerTable.item(row, column)
+                text = item.text().strip() if item is not None else ""
+                if not text and name == "z":
+                    text = "0"
+                if not text:
+                    raise RuntimeError(f"{label} has no {name}")
+                try:
+                    values.append(float(text))
+                except ValueError:
+                    raise RuntimeError(
+                        f"{label}: {name} {text!r} is not a number") from None
+            markers.append({"label": label, "mm": values})
+        data = {
+            "plate_mm": {"width": self.markerWidthSpin.value,
+                         "height": self.markerHeightSpin.value},
+            "markers": markers,
+            "cube_origin_mm": [self.markerOriginXSpin.value,
+                               self.markerOriginYSpin.value,
+                               self.markerOriginZSpin.value],
+        }
+        return validate_plate(data, "the panel")
+
+    def onMarkerAdd(self, checked=False):
+        row = self.markerTable.rowCount
+        self.markerTable.insertRow(row)
+        self.markerTable.setItem(row, 0, qt.QTableWidgetItem(f"M{row + 1}"))
+        for column, value in ((1, "0"), (2, "0"), (3, "0")):
+            self.markerTable.setItem(row, column, qt.QTableWidgetItem(value))
+
+    def onMarkerRemove(self, checked=False):
+        row = self.markerTable.currentRow
+        if row < 0:
+            row = self.markerTable.rowCount - 1
+        if row >= 0:
+            self.markerTable.removeRow(row)
+
+    def onMarkerApply(self, checked=False):
+        """Draw the plate in the cube and check it against the live picture."""
+        from TargetingLib import marker_plate as scene
+
+        try:
+            plate = self._plate_from_panel()
+        except RuntimeError as exc:
+            self.markerStatusLabel.text = f"markers: {exc}"
+            return
+        try:
+            result = scene.apply(plate)
+        except Exception as exc:  # noqa: BLE001 - shown to the operator
+            self.markerStatusLabel.text = f"markers: {exc}"
+            return
+        self.markerStatusLabel.text = result["text"]
+
+    def onMarkerSave(self, checked=False):
+        from targeting.marker_plate import save_plate
+
+        try:
+            plate = self._plate_from_panel()
+            path = save_plate(plate)
+        except RuntimeError as exc:
+            self.markerStatusLabel.text = f"markers: {exc}"
+            return
+        self.markerStatusLabel.text = f"markers saved to {path}"
+
+    def onMarkerLoad(self, checked=False):
+        self._load_marker_panel()
+
     # -- the live camera stream ------------------------------------------
 
-    def _video_file_row(self, form, label, file_filter):
-        row = qt.QHBoxLayout()
-        edit = qt.QLineEdit()
-        edit.setPlaceholderText("\u2014")
-        browse = qt.QPushButton("Browse\u2026")
-        browse.clicked.connect(
-            lambda: self._browse_video(edit, label, file_filter))
-        row.addWidget(edit)
-        row.addWidget(browse)
-        form.addRow(label, row)
-        return edit
-
-    def _browse_video(self, edit, label, file_filter):
-        start = str(pathlib.Path(edit.text).parent
-                    if edit.text.strip() else PROJECT_ROOT)
-        chosen, _selected = qt.QFileDialog.getOpenFileName(
-            self, f"Choose {label}", start, file_filter)
-        if chosen:
-            edit.setText(chosen)
-
-    def _set_video_paths(self, folder):
-        for edit, name in zip(
-                (self.c1Edit, self.c2Edit, self.c3Edit), VIDEO_NAMES):
-            edit.setText(str(folder / name))
-
-    def _preset_downloaded_video(self):
-        self._video_demo_mode = False
-        self._set_video_paths(DOWNLOADED_FOLDER)
-        self.calibrationEdit.clear()
-        self.truthEdit.clear()
-        self._refresh_video_note()
-
-    def _preset_synthetic_video(self):
-        self._video_demo_mode = False
-        self._set_video_paths(SYNTHETIC_FOLDER)
-        self.calibrationEdit.setText(str(SYNTHETIC_FOLDER / "camera-rig.json"))
-        self.truthEdit.setText(str(SYNTHETIC_FOLDER / "truth.json"))
-        self._refresh_video_note()
-
-    def _preset_beef_video(self):
-        self._video_demo_mode = True
-        self._set_video_paths(DOWNLOADED_FOLDER)
-        self.calibrationEdit.setText(str(BEEF_DEMO_CALIBRATION))
-        self.truthEdit.clear()
+    def onConnectRealCameras(self):
+        """One button: start the sender if needed, then connect the views."""
+        device = self.realCameraDeviceEdit.text.strip() or "/dev/video0"
         try:
-            beef_demo.write_demo_calibration(
-                DOWNLOADED_FOLDER / "poses_bounds.npy",
-                BEEF_DEMO_CALIBRATION)
-        except Exception as exc:        # noqa: BLE001 - shown in the panel
-            self._video_demo_mode = False
-            self.videoNote.text = f"beef demo unavailable: {exc}"
-            return
-        self._refresh_video_note()
-
-    def _refresh_video_note(self):
-        if self._video_demo_mode:
-            self.videoNote.text = (
-                "DEMO only: miniature estimated scale, approximate "
-                "calibration, not a measurement, and not written to the "
-                "camera log.")
-        elif self.calibrationEdit.text.strip():
-            self.videoNote.text = (
-                "Calibrated: a complete three-click set will be solved and "
-                "logged.")
-        else:
-            self.videoNote.text = (
-                "No calibration: the video plays, but a complete click set "
-                "is reported as uncalibrated.")
-
-    def onStartVideo(self):
-        files = [edit.text.strip() for edit in
-                 (self.c1Edit, self.c2Edit, self.c3Edit)]
-        try:
-            validate_video_files(files)
-        except LauncherError as exc:
-            self.videoNote.text = str(exc)
-            return
-
-        calibration = self.calibrationEdit.text.strip() or None
-        truth = self.truthEdit.text.strip() or None
-        for label, path in (("calibration", calibration), ("truth", truth)):
-            if path and not pathlib.Path(path).is_file():
-                self.videoNote.text = f"missing {label} file: {path}"
-                return
-        fps = float(self.fpsSpin.value)
-        port = int(self.portSpin.value)
-
-        try:
-            status = self.logic.camera_stream_status()
+            connected = self.logic.connect_camera_stream(
+                port=int(self.portSpin.value))
         except Exception as exc:            # noqa: BLE001 - shown in the panel
-            self.videoNote.text = f"could not check the stream: {exc}"
+            self.streamLabel.text = f"camera stream: could not connect: {exc}"
             return
-        status_name = status.get("status")
-        if (status_name == "connected"
-                and getattr(self.logic, "_video", None) is None):
-            self.videoNote.text = (
-                "a camera stream sender is already connected but was not "
-                "started from this panel; press Stop video (or kill the old "
-                "sender) before starting a new one")
-            return
-        if (status_name in ("off", "unavailable", "error", "paused")
-                or int(status.get("port") or 0) != port):
-            try:
-                if status_name not in ("off", "unavailable", "error", "paused"):
-                    self.logic.disconnect_camera_stream()
-                connected = self.logic.connect_camera_stream(port)
-            except Exception as exc:        # noqa: BLE001 - shown in the panel
-                self.videoNote.text = f"could not connect the stream: {exc}"
-                return
-            if connected["status"] not in ("waiting", "connected"):
-                self.streamLabel.text = connected["message"]
-                self.videoNote.text = connected["message"]
-                return
-            self.streamLabel.text = connected["message"]
+        self.streamLabel.text = connected["message"]
+        self._watch_stream_label()
 
         try:
-            result = self.logic.start_video(
-                files, calibration=calibration, truth=truth, fps=fps)
+            result = self.logic.start_real_cameras(
+                device=device, fps=float(self.fpsSpin.value))
         except Exception as exc:            # noqa: BLE001 - shown in the panel
-            self.videoLabel.text = f"video: could not start: {exc}"
-            self.videoNote.text = f"could not start: {exc}"
+            self.videoLabel.text = f"cameras: could not start: {exc}"
             return
         self.videoLabel.text = result["message"]
-        self.stopVideoButton.setEnabled(result["status"] == "running")
-        self._watch_stream_label()
+        self.realCameraStopButton.setEnabled(result["status"] == "running")
         if result["status"] != "running":
             self.videoNote.text = result["message"]
 
-    def onStopVideo(self):
+    def onStopRealCameras(self):
         try:
             result = self.logic.stop_video()
         except Exception as exc:            # noqa: BLE001 - shown to the operator
-            self.videoLabel.text = f"video: could not stop: {exc}"
+            self.videoLabel.text = f"cameras: could not stop: {exc}"
             return
         self.videoLabel.text = result["message"]
-        self.stopVideoButton.setEnabled(False)
+        self.realCameraStopButton.setEnabled(False)
+        try:
+            stream = self.logic.disconnect_camera_stream()
+        except Exception as exc:            # noqa: BLE001 - shown to the operator
+            self.streamLabel.text = f"camera stream: could not disconnect: {exc}"
+            return
+        self.streamLabel.text = stream["message"]
+        self._stop_stream_timer()
 
     def onConnectCameraStream(self):
         try:
@@ -932,7 +1009,7 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
         except Exception:
             video = {"message": "video: stopped"}
         self.videoLabel.text = video["message"]
-        self.stopVideoButton.setEnabled(False)
+        self.realCameraStopButton.setEnabled(False)
         self._stop_stream_timer()
 
     def onPauseCameraStream(self):
@@ -996,7 +1073,7 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
             self.videoLabel.text = f"video: {exc}"
         else:
             self.videoLabel.text = video["message"]
-            self.stopVideoButton.setEnabled(video["status"] == "running")
+            self.realCameraStopButton.setEnabled(video["status"] == "running")
         if (result["status"] in ("off", "unavailable", "error", "paused")
                 and not (video and video["status"] == "running")):
             self._stop_stream_timer()
@@ -1066,5 +1143,5 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
 
     def refresh_status(self):
         self.statusLabel.text = (
-            "Connect the camera stream, then tick Camera view clicks and "
-            "click the same point once in each camera view.")
+            "Connect the real cameras, then declare the marker plate below. "
+            "Apply draws it in the cube and checks it against camera 1.")

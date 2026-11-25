@@ -1,0 +1,49 @@
+{
+  "note": "PLACEHOLDER. Replace width/height and every marker mm with the measured plate before trusting any number. Plate coordinates: origin at the plate's lower-left corner, x right, y up, millimetres. A marker may be [x, y] or [x, y, z]; z defaults to 0 and must be constant for the pixel map to be fitted. Order matters: MarkerClicks points are matched to this list by index.",
+  "plate_mm": {
+    "width": 60.0,
+    "height": 40.0
+  },
+  "markers": [
+    {
+      "label": "M1",
+      "mm": [
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "label": "M2",
+      "mm": [
+        60.0,
+        0.0
+      ]
+    },
+    {
+      "label": "M3",
+      "mm": [
+        60.0,
+        40.0
+      ]
+    },
+    {
+      "label": "M4",
+      "mm": [
+        0.0,
+        40.0
+      ]
+    },
+    {
+      "label": "M5",
+      "mm": [
+        30.0,
+        20.0
+      ]
+    }
+  ],
+  "cube_origin_mm": [
+    20.0,
+    30.0,
+    0.0
+  ]
+}

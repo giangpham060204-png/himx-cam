@@ -119,11 +119,13 @@ def main():
         )
 
         check(
-            "the panel has Start/Stop video and a video status",
+            "the panel offers real-camera controls and no mock video",
             all(hasattr(widget, name) for name in
-                ("startVideoButton", "stopVideoButton", "videoLabel"))
-            and widget.videoLabel.text.startswith("video:"),
-            f"label={getattr(widget, 'videoLabel', None)}",
+                ("realCameraButton", "realCameraStopButton",
+                 "realCameraDeviceEdit", "fpsSpin", "portSpin", "videoLabel"))
+            and not hasattr(widget, "startVideoButton")
+            and not hasattr(widget, "c1Edit"),
+            f"device={getattr(widget, 'realCameraDeviceEdit', None)}",
         )
 
         logic = widget.logic
@@ -200,31 +202,19 @@ def main():
                 logic._video = None
 
         check(
-            "video settings live inline in the main panel",
+            "camera settings live inline in the main panel",
             all(hasattr(widget, name) for name in
-                ("videoSettings", "c1Edit", "c2Edit", "c3Edit",
-                 "calibrationEdit", "truthEdit", "fpsSpin", "portSpin",
-                 "videoNote"))
+                ("videoSettings", "fpsSpin", "portSpin", "videoNote"))
             and not advanced.isAncestorOf(widget.videoSettings),
             str(getattr(widget, "videoSettings", None)),
         )
-        widget._preset_synthetic_video()
         check(
-            "the synthetic preset fills calibration and truth",
-            pathlib.Path(widget.calibrationEdit.text).is_file()
-            and pathlib.Path(widget.truthEdit.text).is_file(),
-            f"calibration={widget.calibrationEdit.text!r} "
-            f"truth={widget.truthEdit.text!r}",
+            "the frame rate is a live control for the real-camera sender",
+            widget.fpsSpin.value > 0
+            and "--fps" in logic_module.build_device_command(
+                "/dev/video0", fps=widget.fpsSpin.value),
+            f"fpsSpin={widget.fpsSpin.value}",
         )
-        widget._preset_beef_video()
-        check(
-            "the beef preset fills the inline demo calibration",
-            pathlib.Path(widget.calibrationEdit.text).is_file()
-            and "DEMO" in widget.videoNote.text,
-            f"calibration={widget.calibrationEdit.text!r} "
-            f"note={widget.videoNote.text!r}",
-        )
-        widget._preset_downloaded_video()
 
         layout = slicer.app.layoutManager()
         layout.setLayout(slicer.vtkMRMLLayoutNode.SlicerLayoutFourUpView)
