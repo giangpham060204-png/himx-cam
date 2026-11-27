@@ -76,8 +76,9 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
         form = qt.QFormLayout(panel)
 
         self.statusLabel = qt.QLabel(
-            "Connect the real cameras, then declare the marker plate below. "
-            "Apply draws it in the cube and checks it against camera 1.")
+            "Tick Pick targets, then click a point in Red/Green/Yellow. The "
+            "slice slider supplies the third coordinate. Fit the virtual -> "
+            "real markers, then Map last target.")
         self.statusLabel.wordWrap = True
         form.addRow(self.statusLabel)
 
@@ -89,6 +90,17 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
         self.realTargetLabel.wordWrap = True
         self.realTargetLabel.setStyleSheet("font-weight: bold;")
         form.addRow(self.realTargetLabel)
+
+        # Pick mode is the main workflow, not an Advanced option: a click in a
+        # standard slice places the virtual target that Map sends to the real
+        # frame. The slice slider is still the third coordinate.
+        self.pickBox = qt.QCheckBox(
+            "Pick targets (click Red/Green/Yellow)")
+        self.pickBox.toolTip = (
+            "When ticked, a click in Red, Green or Yellow places a target at "
+            "the clicked pixel and the slice slider's depth. The 3D view is "
+            "for viewing, not placing.")
+        form.addRow(self.pickBox)
 
         # The camera-click (triangulation) controls moved to Advanced: the
         # marker plate is the workflow in use.
@@ -390,9 +402,8 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
         self.cameraPixelNote.wordWrap = True
         advanced.addRow(self.cameraPixelNote)
 
-        self.pickBox = qt.QCheckBox("Pick targets (clicks in Red/Green/Yellow)")
-        advanced.addRow(self.pickBox)
-
+        # Pick targets lives in the main panel now; the probe and camera
+        # modes remain here as the legacy/advanced paths.
         self.probeBox = qt.QCheckBox(
             "Probe mode (click a slice to move the camera-check point)"
         )

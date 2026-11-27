@@ -110,12 +110,20 @@ def main():
 
         advanced = getattr(widget, "advancedPanel", None)
         check(
-            "Advanced is collapsed and holds the legacy modes",
+            "Advanced is collapsed and holds the probe/camera modes",
             advanced is not None
             and advanced.collapsed
-            and advanced.isAncestorOf(widget.pickBox)
-            and advanced.isAncestorOf(widget.probeBox),
+            and advanced.isAncestorOf(widget.probeBox)
+            and advanced.isAncestorOf(widget.cameraBox),
             f"collapsed={None if advanced is None else advanced.collapsed}",
+        )
+
+        check(
+            "Pick targets is in the main panel, not Advanced",
+            advanced is not None
+            and not advanced.isAncestorOf(widget.pickBox)
+            and widget.pickBox.text.startswith("Pick targets"),
+            widget.pickBox.text,
         )
 
         check(
