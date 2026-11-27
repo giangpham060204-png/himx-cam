@@ -122,7 +122,9 @@ def main():
             "the panel offers real-camera controls and no mock video",
             all(hasattr(widget, name) for name in
                 ("realCameraButton", "realCameraStopButton",
-                 "realCameraDeviceEdit", "fpsSpin", "portSpin", "videoLabel"))
+                 "realCameraDeviceEdit", "fpsSpin", "portSpin", "videoLabel",
+                 "cameraLayoutButton"))
+            and widget.cameraLayoutButton.isCheckable()
             and not hasattr(widget, "startVideoButton")
             and not hasattr(widget, "c1Edit"),
             f"device={getattr(widget, 'realCameraDeviceEdit', None)}",

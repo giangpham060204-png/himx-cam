@@ -52,10 +52,12 @@ def check(name, ok, detail=""):
 
 
 def _outside_is_refused(logic):
+    from TargetingLib.logic import CAMERA_VIEWS  # noqa: PLC0415
+
     try:
-        logic.set_camera_click("Red", 2.0, 2.0)
+        logic.set_camera_click(CAMERA_VIEWS[0], 2.0, 2.0)
     except ValueError as exc:
-        return "Red" in str(exc)
+        return CAMERA_VIEWS[0] in str(exc)
     return False
 
 
@@ -71,6 +73,7 @@ def main():
         CAMERA_CLICKS_NODE_NAME,
         CAMERA_CLICKS_NODE_NAMES,
         CAMERA_CLICK_COLOURS,
+        CAMERA_VIEWS,
         STREAM_FRUSTUM_NODE_NAMES,
         STREAM_ORIGIN_NODE_NAMES,
         TargetingLogic,
@@ -108,6 +111,10 @@ def main():
 
     folder = pathlib.Path(os.environ["HIMX_TEST_FRAMES"])
     logic = TargetingLogic()
+    # The cameras live in their own slice views: show the layout before any
+    # volume is bound, exactly as the panel does.
+    logic.prepare_camera_layout()
+    logic.set_camera_layout(True)
 
     result = logic.load_camera_views(folder)
     check("three views loaded", result["status"] == "loaded" and len(result["views"]) == 3,
@@ -132,43 +139,43 @@ def main():
     check("a folder with no manifest is reported, not crashed",
           empty["status"] == "nothing")
 
-    widget = slicer.app.layoutManager().sliceWidget("Red")
+    widget = slicer.app.layoutManager().sliceWidget(CAMERA_VIEWS[0])
     view = widget.sliceView()
     size = view.size
     centre = (size.width() / 2.0, size.height() / 2.0)
 
-    logic.set_camera_click("Red", *centre)
-    u, v = logic.camera_pixel("Red", *centre)
+    logic.set_camera_click(CAMERA_VIEWS[0], *centre)
+    u, v = logic.camera_pixel(CAMERA_VIEWS[0], *centre)
     check("a centre click is the picture centre",
           abs(u - 160.0) < 6.0 and abs(v - 160.0) < 6.0, f"pixel=({u:.1f}, {v:.1f})")
 
     logic.clear_camera_clicks()
-    logic.set_camera_click("Red", centre[0] + size.width() * 0.2, centre[1])
-    right_u, _ = logic.camera_pixel("Red", centre[0] + size.width() * 0.2, centre[1])
+    logic.set_camera_click(CAMERA_VIEWS[0], centre[0] + size.width() * 0.2, centre[1])
+    right_u, _ = logic.camera_pixel(CAMERA_VIEWS[0], centre[0] + size.width() * 0.2, centre[1])
     check("a click to the right moves u right", right_u > 160.0 + 30.0, f"u={right_u:.1f}")
 
     logic.clear_camera_clicks()
-    logic.set_camera_click("Red", centre[0], centre[1] + size.height() * 0.2)
-    _, down_v = logic.camera_pixel("Red", centre[0], centre[1] + size.height() * 0.2)
+    logic.set_camera_click(CAMERA_VIEWS[0], centre[0], centre[1] + size.height() * 0.2)
+    _, down_v = logic.camera_pixel(CAMERA_VIEWS[0], centre[0], centre[1] + size.height() * 0.2)
     check("a click below moves v down", down_v > 160.0 + 30.0, f"v={down_v:.1f}")
 
     logic.clear_camera_clicks()
     red_xy = centre
-    green_size = slicer.app.layoutManager().sliceWidget("Green").sliceView().size
+    green_size = slicer.app.layoutManager().sliceWidget(CAMERA_VIEWS[1]).sliceView().size
     green_xy = (green_size.width() / 2.0 + green_size.width() * 0.2,
                 green_size.height() / 2.0)
-    yellow_size = slicer.app.layoutManager().sliceWidget("Yellow").sliceView().size
+    yellow_size = slicer.app.layoutManager().sliceWidget(CAMERA_VIEWS[2]).sliceView().size
     yellow_xy = (yellow_size.width() / 2.0,
                  yellow_size.height() / 2.0 + yellow_size.height() * 0.2)
 
-    first = logic.set_camera_click("Red", *red_xy)
+    first = logic.set_camera_click(CAMERA_VIEWS[0], *red_xy)
     check("a single click publishes", first["published"] is not None,
           str(first["published"]))
     if first["published"] is not None:
         single, single_note = read_clicks(first["published"])
     else:
         single, single_note = None, "nothing published"
-    red_u, red_v = logic.camera_pixel("Red", *red_xy)
+    red_u, red_v = logic.camera_pixel(CAMERA_VIEWS[0], *red_xy)
     if single is None:
         check("one click publishes Red with the rest null", False, single_note)
     else:
@@ -186,7 +193,7 @@ def main():
                   for node in click_nodes[1:]),
           f"points={_click_points()}")
 
-    second = logic.set_camera_click("Green", *green_xy)
+    second = logic.set_camera_click(CAMERA_VIEWS[1], *green_xy)
     if second["published"] is not None:
         partial, partial_note = read_clicks(second["published"])
     else:
@@ -194,7 +201,7 @@ def main():
     if partial is None:
         check("two clicks publish a partial set", False, partial_note)
     else:
-        green_u, green_v = logic.camera_pixel("Green", *green_xy)
+        green_u, green_v = logic.camera_pixel(CAMERA_VIEWS[1], *green_xy)
         red = partial.pixels[0]
         green = partial.pixels[1]
         check("two clicks publish a partial set",
@@ -204,13 +211,13 @@ def main():
               and abs(green[1] - green_v) < 6.0
               and partial.pixels[2] is None,
               f"pixels={partial.pixels}")
-    third = logic.set_camera_click("Yellow", *yellow_xy)
+    third = logic.set_camera_click(CAMERA_VIEWS[2], *yellow_xy)
     if third["published"] is not None:
         clicks, note = read_clicks(third["published"])
     else:
         clicks, note = None, "nothing published"
     check("three clicks publish one readable set", clicks is not None, note)
-    expected = (("Red", red_xy), ("Green", green_xy), ("Yellow", yellow_xy))
+    expected = ((CAMERA_VIEWS[0], red_xy), (CAMERA_VIEWS[1], green_xy), (CAMERA_VIEWS[2], yellow_xy))
     for index, (widget_name, xy) in enumerate(expected):
         u, v = logic.camera_pixel(widget_name, *xy)
         if clicks is None:
@@ -243,7 +250,7 @@ def main():
               ras_ok,
               f"mark={tuple(round(p, 3) for p in pos)} "
               f"want={tuple(round(p, 3) for p in want_ras)}")
-    for index, widget_name in enumerate(("Red", "Green", "Yellow")):
+    for index, widget_name in enumerate(CAMERA_VIEWS):
         tag = ("c1", "c2", "c3")[index]
         node = click_nodes[index]
         own = (slicer.app.layoutManager().sliceWidget(widget_name)
@@ -252,7 +259,7 @@ def main():
         check(f"click {tag} shows only in its own view",
               ids == [own],
               f"node={CAMERA_CLICKS_NODE_NAMES[index]} views={ids} own={own}")
-    for index, widget_name in enumerate(("Red", "Green", "Yellow")):
+    for index, widget_name in enumerate(CAMERA_VIEWS):
         tag = ("c1", "c2", "c3")[index]
         node = click_nodes[index]
         colour = (tuple(round(c, 3) for c in node.GetDisplayNode().GetColor())
@@ -314,7 +321,7 @@ def main():
     pos = [0.0, 0.0, 0.0]
     click_nodes[0].GetNthControlPointPosition(0, pos)
     moved_ras = (float(pos[0]) + 10.0, float(pos[1]), float(pos[2]))
-    expected = logic.ras_to_camera_pixel("Red", moved_ras)
+    expected = logic.ras_to_camera_pixel(CAMERA_VIEWS[0], moved_ras)
     green_pos = [0.0, 0.0, 0.0]
     click_nodes[1].GetNthControlPointPosition(0, green_pos)
     green_ras = tuple(float(value) for value in green_pos)
@@ -382,7 +389,7 @@ def main():
     current, _ = read_clicks(logic.last_clicks_path)
     rows_ok, rows_detail = current is not None, ""
     if current is not None:
-        for index, widget_name in enumerate(("Red", "Green", "Yellow")):
+        for index, widget_name in enumerate(CAMERA_VIEWS):
             u_edit, v_edit = widget.cameraPixelEdits[widget_name]
             published = current.pixels[index]
             try:
@@ -399,13 +406,13 @@ def main():
     check("panel rows show the published pixels", rows_ok, rows_detail)
 
     before_typing, _ = read_clicks(logic.last_clicks_path)
-    green_edits = widget.cameraPixelEdits["Green"]
+    green_edits = widget.cameraPixelEdits[CAMERA_VIEWS[1]]
     green_edits[0].setText("196.5")
     green_edits[1].setText("129.0")
-    typed = widget.on_camera_pixel_edited("Green")
+    typed = widget.on_camera_pixel_edited(CAMERA_VIEWS[1])
     import vtk
 
-    green_widget = slicer.app.layoutManager().sliceWidget("Green")
+    green_widget = slicer.app.layoutManager().sliceWidget(CAMERA_VIEWS[1])
     green_volume = slicer.mrmlScene.GetNodeByID(
         green_widget.sliceLogic().GetSliceCompositeNode().GetBackgroundVolumeID())
     matrix = vtk.vtkMatrix4x4()
@@ -448,7 +455,7 @@ def main():
     file_before, _ = read_clicks(logic.last_clicks_path)
     green_edits[0].setText("500")
     green_edits[1].setText("129.0")
-    refused = widget.on_camera_pixel_edited("Green")
+    refused = widget.on_camera_pixel_edited(CAMERA_VIEWS[1])
     slicer.app.processEvents()
     time.sleep(0.4)
     slicer.app.processEvents()
@@ -480,7 +487,7 @@ def main():
           and abs(kept[0] - 196.5) < 1e-9 and abs(kept[1] - 129.0) < 1e-9,
           f"note={note!r} fields={kept}")
 
-    for widget_name in ("Red", "Green", "Yellow"):
+    for widget_name in CAMERA_VIEWS:
         u_edit, v_edit = widget.cameraPixelEdits[widget_name]
         u_edit.setText("150.0")
         v_edit.setText("150.0")
@@ -491,7 +498,7 @@ def main():
 
     green_edits[0].setText("196.5")
     green_edits[1].setText("129.0")
-    widget.on_camera_pixel_edited("Green")
+    widget.on_camera_pixel_edited(CAMERA_VIEWS[1])
     check("a distinct pixel clears the identical warning",
           "identical" not in widget.cameraPixelNote.text,
           f"note={widget.cameraPixelNote.text!r}")
@@ -515,7 +522,7 @@ def main():
     legacy = slicer.mrmlScene.AddNewNodeByClass(
         "vtkMRMLMarkupsFiducialNode", CAMERA_CLICKS_NODE_NAME)
     legacy.AddControlPoint(1.0, 2.0, 3.0)
-    logic.set_camera_click("Red", *red_xy)
+    logic.set_camera_click(CAMERA_VIEWS[0], *red_xy)
     check("a mark removes the pre-split legacy node, never reuses it",
           slicer.mrmlScene.GetFirstNodeByName(CAMERA_CLICKS_NODE_NAME) is None
           and _click_points() == [1, 0, 0],
@@ -609,7 +616,7 @@ def main():
 
     rows_ok, rows_detail = seeded_file is not None, ""
     if seeded_file is not None:
-        for index, widget_name in enumerate(("Red", "Green", "Yellow")):
+        for index, widget_name in enumerate(CAMERA_VIEWS):
             u_edit, v_edit = widget.cameraPixelEdits[widget_name]
             published = seeded_file.pixels[index]
             try:
@@ -650,7 +657,7 @@ def main():
     seed_nodes[0].GetNthControlPointPosition(0, _seed_pos)
     _seed_moved = (float(_seed_pos[0]) + 10.0, float(_seed_pos[1]),
                    float(_seed_pos[2]))
-    _seed_expected = logic.ras_to_camera_pixel("Red", _seed_moved)
+    _seed_expected = logic.ras_to_camera_pixel(CAMERA_VIEWS[0], _seed_moved)
     seed_nodes[0].SetNthControlPointPosition(0, *_seed_moved)
     _reseeded = None
     deadline = time.time() + 2.0
@@ -732,7 +739,7 @@ def main():
               f"point={_mixed_point} " + " ".join(_detail))
         _rows = {name: (widget.cameraPixelEdits[name][0].text.strip(),
                         widget.cameraPixelEdits[name][1].text.strip())
-                 for name in ("Red", "Green", "Yellow")}
+                 for name in CAMERA_VIEWS}
         _rows_ok = all((not u and not v) if _mixed_want[i] is None else (u and v)
                        for i, (u, v) in enumerate(_rows.values()))
         check("partial spawn clears exactly the matching pixel rows", bool(_rows_ok),
@@ -778,7 +785,7 @@ def main():
           far_note if far_file is None else f"pixels={far_file.pixels}")
     far_rows = {name: (widget.cameraPixelEdits[name][0].text.strip(),
                        widget.cameraPixelEdits[name][1].text.strip())
-                for name in ("Red", "Green", "Yellow")}
+                for name in CAMERA_VIEWS}
     check("all-outside spawn clears the pixel rows",
           all(not u and not v for u, v in far_rows.values()),
           f"rows={far_rows}")

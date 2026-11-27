@@ -29,7 +29,6 @@ SOLVED_PATH = PROJECT_ROOT / "logs" / "marker-frame.json"
 PLATE_NODE = "MarkerPlate"
 OUTLINE_NODE = "MarkerPlateOutline"  # old scenes only; removed on apply
 CLICKS_NODE = "MarkerClicks"
-CAMERA_VIEW = "Red"
 CAMERA_NAME = "c1"
 CAMERA_NAMES = ("c1", "c2", "c3")
 PLATE_COLOUR = (1.00, 0.82, 0.25)
@@ -142,27 +141,42 @@ def build_plate(plate, frame=None):
     return node
 
 
+def _view_showing(volume_name):
+    """(view name, widget, volume) for the view whose background is that volume.
+
+    Found by volume name, not by view name: c1 may be in the camera layout's
+    Cam1 pane or in a standard slice view, and the click maths has to follow
+    the picture the operator is actually looking at.
+    """
+    layout = slicer.app.layoutManager()
+    for view_name in layout.sliceViewNames():
+        widget = layout.sliceWidget(view_name)
+        if widget is None or widget.mrmlSliceNode() is None:
+            continue
+        volume_id = (widget.sliceLogic().GetSliceCompositeNode()
+                     .GetBackgroundVolumeID())
+        volume = slicer.mrmlScene.GetNodeByID(volume_id) if volume_id else None
+        if volume is not None and volume.GetName() == volume_name:
+            return view_name, widget, volume
+    return None, None, None
+
+
 def camera_pixels(count):
     """Camera 1's pixels for the MarkerClicks points, in list order.
 
-    The Red view's own background volume supplies the RAS-to-pixel matrix, so
-    the answer is whatever picture is actually on screen -- not a remembered
-    geometry. A view showing another camera, or a point outside the picture,
-    refuses by name rather than clamping.
+    The view that is actually showing c1 supplies the RAS-to-pixel matrix, so
+    the answer is whatever picture is on screen -- not a remembered geometry,
+    and not a hardcoded view name: c1 may be in the camera layout's Cam1 pane
+    or in a standard slice view. No view showing c1, or a point outside the
+    picture, refuses by name rather than clamping.
     """
-    widget = slicer.app.layoutManager().sliceWidget(CAMERA_VIEW)
+    view_name, widget, volume = _view_showing(CAMERA_NAME)
     if widget is None:
-        raise RuntimeError(f"there is no {CAMERA_VIEW} view in this layout")
-    volume_id = (widget.sliceLogic().GetSliceCompositeNode()
-                 .GetBackgroundVolumeID())
-    volume = slicer.mrmlScene.GetNodeByID(volume_id) if volume_id else None
+        raise RuntimeError(f"no view is showing {CAMERA_NAME}; connect the "
+                           f"real cameras (or show c1 in a slice view) first")
     if volume is None or volume.GetImageData() is None:
-        raise RuntimeError(f"the {CAMERA_VIEW} view has no camera picture; "
+        raise RuntimeError(f"the {view_name} view has no camera picture; "
                            f"start the stream first")
-    if volume.GetName() != CAMERA_NAME:
-        raise RuntimeError(
-            f"the {CAMERA_VIEW} view is showing {volume.GetName()!r}, not "
-            f"{CAMERA_NAME!r}; show camera 1 there before clicking")
 
     node = slicer.mrmlScene.GetFirstNodeByName(CLICKS_NODE)
     if node is None or not node.IsA("vtkMRMLMarkupsFiducialNode"):
@@ -200,7 +214,7 @@ def check(plate):
     try:
         pixels, note = camera_pixels(len(plate["markers"]))
     except RuntimeError as exc:
-        # No camera in the Red view is not a failure to draw the plate: it only
+        # No view showing c1 is not a failure to draw the plate: it only
         # means the clicks cannot be checked yet.
         return {"status": "unchecked", "note": str(exc)}
     if pixels is None:

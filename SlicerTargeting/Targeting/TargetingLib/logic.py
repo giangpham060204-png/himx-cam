@@ -39,6 +39,11 @@ from targeting.converter import (  # noqa: E402
     cube_to_ras,
     ras_to_cube,
 )
+from targeting.layouts import (  # noqa: E402
+    CAMERA_LAYOUT_ID,
+    CAMERA_VIEWS,
+    camera_layout_xml,
+)
 from targeting.logbook import append_target  # noqa: E402
 from targeting.probe import PROBE_FILE  # noqa: E402
 from targeting.rig import load_rig  # noqa: E402
@@ -61,7 +66,6 @@ VIEW_WIDGETS = {"XY": "Red", "XZ": "Green", "YZ": "Yellow"}
 PROBE_NODE_NAME = "SandboxProbe"
 PROBE_COLOUR = (0.85, 0.1, 0.85)
 PROBE_WRITE_INTERVAL_MS = 150
-CAMERA_VIEWS = ("Red", "Green", "Yellow")
 
 # One display window for all three camera volumes. Auto window/level chooses a
 # different stretch per camera, so a featureless tile (a few counts of sensor
@@ -302,8 +306,10 @@ class SliceClickFilter(qt.QObject):
         inspection, so keep their centre fixed.
         """
         try:
-            slice_widget = slicer.app.layoutManager().sliceWidget(
-                VIEW_WIDGETS[self.view])
+            # A camera filter carries the pane name already; the legacy
+            # modes carry XY/XZ/YZ and are mapped to their standard view.
+            view_name = VIEW_WIDGETS.get(self.view, self.view)
+            slice_widget = slicer.app.layoutManager().sliceWidget(view_name)
             if slice_widget is None:
                 return
             node = slice_widget.sliceLogic().GetSliceNode()
@@ -322,8 +328,8 @@ class SliceClickFilter(qt.QObject):
     def _pan_view(self, dx, dy):
         """Move the slice view with the pointer; content follows the drag."""
         try:
-            slice_widget = slicer.app.layoutManager().sliceWidget(
-                VIEW_WIDGETS[self.view])
+            view_name = VIEW_WIDGETS.get(self.view, self.view)
+            slice_widget = slicer.app.layoutManager().sliceWidget(view_name)
             if slice_widget is None:
                 return
             node = slice_widget.sliceLogic().GetSliceNode()
@@ -1157,7 +1163,7 @@ class TargetingLogic(ScriptedLoadableModuleLogic):
             traceback.print_exc()
 
     def _bind_camera_stream_views(self):
-        """Show c1/c2/c3 in Red/Green/Yellow once all three have arrived."""
+        """Show c1/c2/c3 in the camera panes once all three have arrived."""
         nodes = []
         for name in STREAM_DEVICE_NAMES:
             node = slicer.mrmlScene.GetFirstNodeByName(name)
@@ -1956,6 +1962,87 @@ class TargetingLogic(ScriptedLoadableModuleLogic):
         self._clear_stream_geometry()
         return self.camera_stream_status()
 
+    def prepare_camera_layout(self):
+        """Register the camera layout description once. Returns its id.
+
+        Idempotent on purpose: each registered description is an entry in the
+        layout menu, so re-entering the module must not add it again.
+        """
+        layout_node = slicer.app.layoutManager().layoutLogic().GetLayoutNode()
+        if not layout_node.GetLayoutDescription(CAMERA_LAYOUT_ID):
+            layout_node.AddLayoutDescription(CAMERA_LAYOUT_ID,
+                                             camera_layout_xml())
+        return CAMERA_LAYOUT_ID
+
+    def camera_layout_active(self):
+        """True when the camera layout is the arrangement on screen."""
+        try:
+            layout_node = (slicer.app.layoutManager().layoutLogic()
+                           .GetLayoutNode())
+            return layout_node.GetViewArrangement() == CAMERA_LAYOUT_ID
+        except Exception:  # noqa: BLE001 - a question, not a state change
+            return False
+
+    def set_camera_layout(self, enabled):
+        """Three camera panes over the 3D view, or the standard four-up.
+
+        The switch is what creates the Cam1/Cam2/Cam3 slice widgets, so the
+        caller installs its click filters after this returns.
+        """
+        layout = slicer.app.layoutManager()
+        if enabled:
+            self.prepare_camera_layout()
+            layout.setLayout(CAMERA_LAYOUT_ID)
+            slicer.app.processEvents()
+            self._fit_camera_row()
+            for name in CAMERA_VIEWS:
+                widget = layout.sliceWidget(name)
+                if widget is None:
+                    continue
+                try:
+                    # A still picture at one slice: its slider and fit buttons
+                    # do nothing and eat the height the picture needs.
+                    widget.sliceController().setVisible(False)
+                except Exception:  # noqa: BLE001 - display only
+                    pass
+        else:
+            layout.setLayout(slicer.vtkMRMLLayoutNode.SlicerLayoutFourUpView)
+        slicer.app.processEvents()
+        return self.camera_layout_active()
+
+    def _fit_camera_row(self):
+        """Give the camera row the height its 4:3 pictures want.
+
+        A layout description cannot express proportions, and the splitter's
+        default hands the camera row either a sliver or the whole window
+        depending on which side has the larger size hint. Setting the sizes
+        from the pane width makes each pane 4:3, so the 160x120 picture fills
+        it instead of sitting in black bars.
+        """
+        widget = slicer.app.layoutManager().sliceWidget(CAMERA_VIEWS[0])
+        if widget is None:
+            return
+        main = slicer.util.mainWindow()
+        splitters = (main.findChildren("QSplitter")
+                     + main.findChildren("ctkSplitter"))
+        for splitter in splitters:
+            try:
+                orientation = splitter.orientation
+                if callable(orientation):
+                    orientation = orientation()
+                if (orientation != qt.Qt.Vertical
+                        or splitter.count() != 2
+                        or not splitter.isAncestorOf(widget)):
+                    continue
+            except Exception:  # noqa: BLE001 - a deleted or odd widget
+                continue
+            total = int(splitter.height)
+            pane_width = max(1, int(splitter.width) // len(CAMERA_VIEWS))
+            wanted = int(round(pane_width * 0.75))   # 160x120 is 4:3
+            wanted = max(120, min(wanted, int(total * 0.55)))
+            splitter.setSizes([wanted, max(1, total - wanted)])
+            return
+
     def _show_camera_views(self, nodes):
         """Put three scalar volumes into the three camera slice views."""
         views = {}
@@ -1969,10 +2056,21 @@ class TargetingLogic(ScriptedLoadableModuleLogic):
             display.SetWindowLevel(CAMERA_WINDOW, CAMERA_LEVEL)
 
             widget = slicer.app.layoutManager().sliceWidget(widget_name)
+            if widget is None or widget.mrmlSliceNode() is None:
+                raise RuntimeError(
+                    f"{widget_name}: the camera layout is not showing; press "
+                    f"Camera layout (or Connect real cameras) first")
             widget.mrmlSliceNode().SetOrientationToAxial()
             composite = widget.sliceLogic().GetSliceCompositeNode()
             composite.SetBackgroundVolumeID(node.GetID())
             widget.sliceLogic().FitSliceToAll()
+            try:
+                # A camera pane is a still picture at one slice: its slider,
+                # fit and slice controls do nothing useful and eat the height
+                # the picture needs.
+                widget.sliceController().setVisible(False)
+            except Exception:  # noqa: BLE001 - display only
+                pass
             try:
                 # The camera pictures are 2D evidence. Showing their slice
                 # planes in the 3D view adds large textured surfaces that are
@@ -2112,8 +2210,8 @@ class TargetingLogic(ScriptedLoadableModuleLogic):
             widget = slicer.app.layoutManager().sliceWidget(widget_name)
             if widget is None or widget.mrmlSliceNode() is None:
                 raise ValueError(
-                    f"{widget_name}: the {widget_name} slice view is not in "
-                    "this layout — restore the standard layout")
+                    f"{widget_name}: the camera layout is not showing — "
+                    "press Camera layout, or Connect real cameras")
             view_ids.append(widget.mrmlSliceNode().GetID())
         return tuple(view_ids)
 

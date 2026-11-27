@@ -55,10 +55,12 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
         super().__init__(parent)
         self.logic = TargetingLogic()
         self.filters = {}
+        self.cameraFilters = {}
         self.lastClick = None
         self.streamTimer = None
         self.threeDFilter = None
         self._video_demo_mode = False
+        self._layout_busy = False
 
     # -- UI ---------------------------------------------------------------
 
@@ -89,6 +91,14 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
         real.addWidget(self.realCameraButton)
         real.addWidget(self.realCameraStopButton)
         form.addRow(real)
+
+        self.cameraLayoutButton = qt.QPushButton("Camera layout (3 feeds + 3D)")
+        self.cameraLayoutButton.setCheckable(True)
+        self.cameraLayoutButton.toolTip = (
+            "Three camera panes above one wide 3D view. The feeds get their "
+            "own views (c1, c2, c3), so Red/Green/Yellow stay free and a "
+            "camera picture is never mistaken for a coordinate space.")
+        form.addRow(self.cameraLayoutButton)
 
         self.realCameraDeviceEdit = qt.QLineEdit("/dev/video0")
         self.realCameraDeviceEdit.toolTip = (
@@ -365,6 +375,7 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
         self.clearCameraButton.clicked.connect(self.onClearCameraClicks)
         self.realCameraButton.clicked.connect(self.onConnectRealCameras)
         self.realCameraStopButton.clicked.connect(self.onStopRealCameras)
+        self.cameraLayoutButton.toggled.connect(self.onCameraLayoutToggled)
         self.connectStreamButton.clicked.connect(
             lambda _checked=False: self.onConnectCameraStream())
         self.disconnectStreamButton.clicked.connect(
@@ -389,6 +400,7 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
     def enter(self):
         self.install_filters()
         self.refresh_status()
+        self._sync_layout_button()
         # First entry fills the table; returning to the module must not throw
         # away edits the operator has not saved yet.
         if self.markerTable.rowCount == 0:
@@ -448,10 +460,16 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
         return view_widget
 
     def install_filters(self):
-        if self.filters:
-            return
+        """Attach the click filters to every view that is showing.
+
+        Called again after a layout switch: a camera view only exists once
+        the camera layout has been shown. Each name is checked before it is
+        added, so a second call never stacks two filters on one widget.
+        """
         layout = slicer.app.layoutManager()
         for view, widget_name in VIEW_WIDGETS.items():
+            if widget_name in self.filters:
+                continue
             slice_widget = layout.sliceWidget(widget_name)
             if slice_widget is None:
                 continue
@@ -459,36 +477,65 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
             view_filter = SliceClickFilter(view, self.on_click)
             target.installEventFilter(view_filter)
             self.filters[widget_name] = (target, view_filter)
-        three_d = layout.threeDWidget(0)
-        if three_d is not None:
-            three_view = three_d.threeDView()
-            target = self._mouse_target(three_view)
-            three_filter = ThreeDViewClickFilter(three_view)
-            target.installEventFilter(three_filter)
-            self.threeDFilter = (target, three_filter)
 
-    def remove_filters(self):
-        for view_widget, view_filter in self.filters.values():
-            view_widget.removeEventFilter(view_filter)
+        # Camera panes get their own filters, addressed by the pane name: a
+        # click there is a pixel in that camera, never a slice-mode click.
+        for widget_name in CAMERA_VIEWS:
+            if widget_name in self.cameraFilters:
+                continue
+            slice_widget = layout.sliceWidget(widget_name)
+            if slice_widget is None:
+                continue
+            target = self._mouse_target(slice_widget.sliceView())
+            view_filter = SliceClickFilter(widget_name, self.on_camera_click)
+            target.installEventFilter(view_filter)
+            self.cameraFilters[widget_name] = (target, view_filter)
+
+        if self.threeDFilter is None:
+            three_d = layout.threeDWidget(0)
+            if three_d is not None:
+                three_view = three_d.threeDView()
+                target = self._mouse_target(three_view)
+                three_filter = ThreeDViewClickFilter(three_view)
+                target.installEventFilter(three_filter)
+                self.threeDFilter = (target, three_filter)
+
+    def remove_filters(self, reset_modes=True):
+        for target, view_filter in (list(self.filters.values())
+                                    + list(self.cameraFilters.values())):
+            try:
+                target.removeEventFilter(view_filter)
+            except RuntimeError:
+                # The layout switch already deleted the widget underneath it.
+                pass
         self.filters = {}
+        self.cameraFilters = {}
         if self.threeDFilter is not None:
             target, three_filter = self.threeDFilter
-            target.removeEventFilter(three_filter)
+            try:
+                target.removeEventFilter(three_filter)
+            except RuntimeError:
+                pass
             self.threeDFilter = None
-        self.pickBox.checked = False  # toggled() flips the enabled flags
-        self.probeBox.checked = False
-        self.cameraBox.checked = False
+        if reset_modes:
+            self.pickBox.checked = False  # toggled() flips the enabled flags
+            self.probeBox.checked = False
+            self.cameraBox.checked = False
 
     def set_pick_enabled(self, enabled):
         for _widget, view_filter in self.filters.values():
             view_filter.click_enabled = bool(enabled)
 
+    def set_camera_enabled(self, enabled):
+        for _widget, view_filter in self.cameraFilters.values():
+            view_filter.click_enabled = bool(enabled)
+
     # -- handlers -------------------------------------------------------------
 
     def refresh_filters(self):
-        """Clicks are wanted when any mode is on; all modes share the filters."""
-        self.set_pick_enabled(self.pickBox.checked or self.probeBox.checked
-                              or self.cameraBox.checked)
+        """Clicks follow the ticked mode: camera panes only in camera mode."""
+        self.set_pick_enabled(self.pickBox.checked or self.probeBox.checked)
+        self.set_camera_enabled(self.cameraBox.checked)
 
     def _exclusive_mode(self, mode):
         """Release the other click modes, so the last tick is the only one."""
@@ -508,8 +555,10 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
         if checked:
             self.cameraLabel.text = (
                 "camera mode: live video (fixed target); click the SAME point "
-                "once in Red, Green and Yellow; each click moves that mark "
-                "at once")
+                "once in c1, c2 and c3; each click moves that mark at once")
+            if not self.cameraFilters:
+                self.cameraLabel.text += (
+                    " — press Camera layout to show the camera panes")
             self.rayGuideLabel.text = self.logic.ray_guide_status()
             try:
                 timer = self.logic.watch_camera_clicks()
@@ -546,9 +595,6 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
 
     def on_click(self, view, u_px, v_px):
         self.lastClick = (view, u_px, v_px)
-        if self.cameraBox.checked:
-            self.on_camera_click(view, u_px, v_px)
-            return
         if self.probeBox.checked:
             self.on_probe_click(view, u_px, v_px)
             return
@@ -601,14 +647,13 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
             f"Cube ({cube[0]:.1f}, {cube[1]:.1f}, {cube[2]:.1f}) mm"
         )
 
-    def on_camera_click(self, view, u_px, v_px):
-        """A click in camera mode becomes that camera's image pixel.
+    def on_camera_click(self, widget_name, u_px, v_px):
+        """A click in a camera pane becomes that camera's image pixel.
 
         Each click publishes the live set at once -- views not clicked yet
         go out as null -- and leaves that camera's mark on its view. A
         refused click names its view on the label instead of crashing Slicer.
         """
-        widget_name = VIEW_WIDGETS[view]
         try:
             result = self.logic.set_camera_click(widget_name, u_px, v_px)
         except ValueError as exc:
@@ -949,8 +994,53 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
 
     # -- the live camera stream ------------------------------------------
 
+    def onCameraLayoutToggled(self, checked):
+        if self._layout_busy:
+            return
+        self._show_camera_layout(bool(checked))
+
+    def _sync_layout_button(self):
+        """Match the button to the arrangement on screen, without switching."""
+        try:
+            active = self.logic.camera_layout_active()
+        except Exception:  # noqa: BLE001 - a label, not a state change
+            active = False
+        self._layout_busy = True
+        try:
+            self.cameraLayoutButton.checked = active
+        finally:
+            self._layout_busy = False
+
+    def _show_camera_layout(self, enabled):
+        """Switch the arrangement, then re-seat the click filters.
+
+        The camera panes only exist while this layout is showing, so the
+        filters are installed after the switch and the ticked click mode is
+        re-applied to whatever is now on screen.
+        """
+        self._layout_busy = True
+        try:
+            # Filters are seated on widgets that the switch may replace, so
+            # they come off first and go back on whatever is now showing. The
+            # ticked click modes are kept: a layout change is not a mode change.
+            self.remove_filters(reset_modes=False)
+            self.logic.set_camera_layout(bool(enabled))
+            self.cameraLayoutButton.checked = bool(enabled)
+            self.install_filters()
+        except Exception as exc:            # noqa: BLE001 - shown in the panel
+            self.streamLabel.text = f"layout: {exc}"
+            return
+        finally:
+            self._layout_busy = False
+        self.refresh_filters()
+
     def onConnectRealCameras(self):
-        """One button: start the sender if needed, then connect the views."""
+        """One button: camera layout, then the sender, then the connection.
+
+        The layout comes first: binding a volume needs the camera panes to
+        exist, and a camera picture is only ever shown in its own view.
+        """
+        self._show_camera_layout(True)
         device = self.realCameraDeviceEdit.text.strip() or "/dev/video0"
         try:
             connected = self.logic.connect_camera_stream(
@@ -987,8 +1077,13 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
             return
         self.streamLabel.text = stream["message"]
         self._stop_stream_timer()
+        # The camera workspace closes with the cameras; the layout button
+        # brings it back without restarting the sender.
+        self._show_camera_layout(False)
 
     def onConnectCameraStream(self):
+        # The panes are where the volumes land: show the layout first.
+        self._show_camera_layout(True)
         try:
             result = self.logic.connect_camera_stream()
         except Exception as exc:            # noqa: BLE001 - shown to the operator
@@ -1011,6 +1106,7 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
         self.videoLabel.text = video["message"]
         self.realCameraStopButton.setEnabled(False)
         self._stop_stream_timer()
+        self._show_camera_layout(False)
 
     def onPauseCameraStream(self):
         try:
