@@ -57,6 +57,9 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
         self.filters = {}
         self.cameraFilters = {}
         self.lastClick = None
+        self.lastCube = None
+        self.lastReal = None
+        self.registrationFit = None
         self.streamTimer = None
         self.threeDFilter = None
         self._video_demo_mode = False
@@ -241,6 +244,81 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
         self.markerStatusLabel.wordWrap = True
         marker_form.addRow(self.markerStatusLabel)
 
+        # -- virtual -> real --------------------------------------------
+        # The client's flow: pick in the virtual scene, map through measured
+        # markers to the real frame. The camera is not in this coordinate
+        # path; it can verify the markers, but the transform is rigid.
+        self.registrationPanel = ctk.ctkCollapsibleButton()
+        self.registrationPanel.text = "Virtual → real (measured markers)"
+        self.registrationPanel.collapsed = False
+        form.addRow(self.registrationPanel)
+        registration_form = qt.QFormLayout(self.registrationPanel)
+
+        self.realFrameEdit = qt.QLineEdit("arm-base")
+        self.realFrameEdit.toolTip = (
+            "Name of the measured frame. The r* numbers below are in it; the "
+            "name is recorded in every mapped target.")
+        registration_form.addRow("real frame", self.realFrameEdit)
+
+        self.registrationTable = qt.QTableWidget(0, 7)
+        self.registrationTable.setHorizontalHeaderLabels(
+            ["label", "vx", "vy", "vz", "rx", "ry", "rz"])
+        try:
+            self.registrationTable.horizontalHeader().setSectionResizeMode(
+                0, qt.QHeaderView.Stretch)
+        except Exception:  # noqa: BLE001 - older Qt spelling
+            self.registrationTable.horizontalHeader().setStretchLastSection(
+                True)
+        for column in range(1, 7):
+            self.registrationTable.setColumnWidth(column, 52)
+        self.registrationTable.verticalHeader().setVisible(False)
+        self.registrationTable.setMinimumHeight(140)
+        self.registrationTable.toolTip = (
+            "v* = virtual Slicer cube millimetres; r* = the same marker "
+            "measured in the real frame. Three non-collinear markers are the "
+            "minimum; four or more make the residual a stronger check.")
+        registration_form.addRow(self.registrationTable)
+
+        registration_buttons = qt.QHBoxLayout()
+        self.registrationSyncButton = qt.QPushButton("Sync virtual from plate")
+        self.registrationFitButton = qt.QPushButton("Fit")
+        self.registrationMapButton = qt.QPushButton("Map last target")
+        self.registrationSyncButton.toolTip = (
+            "Copy each plate marker's cube coordinates into the v* columns, "
+            "matching by label; the r* measurements are kept")
+        self.registrationFitButton.toolTip = (
+            "Fit the rigid virtual-to-real transform and show the residual")
+        self.registrationMapButton.toolTip = (
+            "Map the last placed target from the virtual cube to the real "
+            "frame")
+        registration_buttons.addWidget(self.registrationSyncButton)
+        registration_buttons.addWidget(self.registrationFitButton)
+        registration_buttons.addWidget(self.registrationMapButton)
+        registration_form.addRow(registration_buttons)
+
+        registration_edit_row = qt.QHBoxLayout()
+        self.registrationAddButton = qt.QPushButton("Add marker")
+        self.registrationRemoveButton = qt.QPushButton("Remove")
+        self.registrationAddButton.toolTip = "Append one marker row"
+        self.registrationRemoveButton.toolTip = "Remove the selected row"
+        registration_edit_row.addWidget(self.registrationAddButton)
+        registration_edit_row.addWidget(self.registrationRemoveButton)
+        registration_form.addRow(registration_edit_row)
+
+        registration_file_row = qt.QHBoxLayout()
+        self.registrationSaveButton = qt.QPushButton("Save")
+        self.registrationLoadButton = qt.QPushButton("Load")
+        self.registrationSaveButton.toolTip = "Write marker-registration.json"
+        self.registrationLoadButton.toolTip = (
+            "Read marker-registration.json into the table")
+        registration_file_row.addWidget(self.registrationSaveButton)
+        registration_file_row.addWidget(self.registrationLoadButton)
+        registration_form.addRow(registration_file_row)
+
+        self.registrationStatusLabel = qt.QLabel("registration: not fitted")
+        self.registrationStatusLabel.wordWrap = True
+        registration_form.addRow(self.registrationStatusLabel)
+
         self.advancedPanel = ctk.ctkCollapsibleButton()
         self.advancedPanel.text = "Advanced"
         self.advancedPanel.collapsed = True
@@ -392,6 +470,15 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
         self.markerApplyButton.clicked.connect(self.onMarkerApply)
         self.markerSaveButton.clicked.connect(self.onMarkerSave)
         self.markerLoadButton.clicked.connect(self.onMarkerLoad)
+        self.registrationSyncButton.clicked.connect(self.onRegistrationSync)
+        self.registrationFitButton.clicked.connect(self.onRegistrationFit)
+        self.registrationMapButton.clicked.connect(self.onRegistrationMap)
+        self.registrationSaveButton.clicked.connect(self.onRegistrationSave)
+        self.registrationLoadButton.clicked.connect(self.onRegistrationLoad)
+        self.registrationAddButton.clicked.connect(self.onRegistrationAdd)
+        self.registrationRemoveButton.clicked.connect(self.onRegistrationRemove)
+        self.registrationTable.itemChanged.connect(self.onRegistrationEdited)
+        self.realFrameEdit.textChanged.connect(self.onRegistrationEdited)
 
         self.layout.addStretch(1)
 
@@ -405,6 +492,8 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
         # away edits the operator has not saved yet.
         if self.markerTable.rowCount == 0:
             self._load_marker_panel()
+        if self.registrationTable.rowCount == 0:
+            self._load_registration_panel()
         try:
             status = self.logic.camera_stream_status()
         except Exception:
@@ -610,6 +699,8 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
         if result["status"] == "placed":
             cube = result["cube"]
             ras = result["ras"]
+            self.lastCube = tuple(float(value) for value in cube)
+            self.lastReal = None
             self.lastLabel.text = (
                 f"Last: {view} view, depth {result['depth_mm']:.1f} mm\n"
                 f"Cube ({cube[0]:.1f}, {cube[1]:.1f}, {cube[2]:.1f}) mm\n"
@@ -992,6 +1083,235 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
     def onMarkerLoad(self, checked=False):
         self._load_marker_panel()
 
+    # -- the virtual -> real registration --------------------------------
+
+    def onRegistrationEdited(self, *_args):
+        """Any edit invalidates the fitted transform until Fit is pressed."""
+        if self.registrationFit is not None:
+            self.registrationFit = None
+            self.registrationStatusLabel.text = (
+                "registration: edited; fit the markers again")
+
+    def _fill_registration_table(self, registration):
+        """Show a loaded registration in the panel fields."""
+        self.registrationTable.setRowCount(0)
+        for marker in registration["markers"]:
+            row = self.registrationTable.rowCount
+            self.registrationTable.insertRow(row)
+            self.registrationTable.setItem(
+                row, 0, qt.QTableWidgetItem(marker["label"]))
+            for column, value in enumerate(
+                    (*marker["virtual_mm"], *marker["real_mm"]), start=1):
+                self.registrationTable.setItem(
+                    row, column, qt.QTableWidgetItem(f"{value:g}"))
+        self.realFrameEdit.text = registration["real_frame"]
+
+    def _registration_from_panel(self):
+        """The panel as a validated registration, refusing by row and column."""
+        from targeting.registration import validate_registration
+
+        markers = []
+        for row in range(self.registrationTable.rowCount):
+            label_item = self.registrationTable.item(row, 0)
+            label = label_item.text().strip() if label_item is not None else ""
+            if not label:
+                raise RuntimeError(f"row {row + 1} has no label")
+            values = []
+            for column, name in ((1, "virtual x"), (2, "virtual y"),
+                                 (3, "virtual z"), (4, "real x"),
+                                 (5, "real y"), (6, "real z")):
+                item = self.registrationTable.item(row, column)
+                text = item.text().strip() if item is not None else ""
+                if not text and name.endswith("z"):
+                    text = "0"
+                if not text:
+                    raise RuntimeError(f"{label} has no {name}")
+                try:
+                    values.append(float(text))
+                except ValueError:
+                    raise RuntimeError(
+                        f"{label}: {name} {text!r} is not a number") from None
+            markers.append({"label": label,
+                            "virtual_mm": values[:3],
+                            "real_mm": values[3:]})
+        return validate_registration(
+            {"real_frame": self.realFrameEdit.text.strip(),
+             "markers": markers}, "the panel")
+
+    def _load_registration_panel(self):
+        """Fill the table from marker-registration.json, quietly when absent."""
+        from targeting import registration
+
+        try:
+            config = registration.load_registration(registration.DEFAULT_PATH)
+        except RuntimeError as exc:
+            self.registrationStatusLabel.text = f"registration: {exc}"
+            return
+        self._fill_registration_table(config)
+        if config["fittable"]:
+            self.registrationStatusLabel.text = (
+                f"registration: {len(config['markers'])} markers loaded from "
+                f"{config['path']} (not fitted)")
+        else:
+            self.registrationStatusLabel.text = (
+                f"registration: {config['note']}; fill the measured mm")
+
+    def onRegistrationLoad(self, checked=False):
+        self._load_registration_panel()
+
+    def onRegistrationAdd(self, checked=False):
+        row = self.registrationTable.rowCount
+        self.registrationTable.insertRow(row)
+        self.registrationTable.setItem(
+            row, 0, qt.QTableWidgetItem(f"M{row + 1}"))
+        for column in range(1, 7):
+            self.registrationTable.setItem(row, column,
+                                           qt.QTableWidgetItem("0"))
+
+    def onRegistrationRemove(self, checked=False):
+        row = self.registrationTable.currentRow
+        if row < 0:
+            row = self.registrationTable.rowCount - 1
+        if row >= 0:
+            self.registrationTable.removeRow(row)
+
+    def onRegistrationSync(self, checked=False):
+        """Copy the plate's cube coordinates into the v* columns by label."""
+        try:
+            plate = self._plate_from_panel()
+        except RuntimeError as exc:
+            self.registrationStatusLabel.text = f"registration: {exc}"
+            return
+
+        rows = {}
+        for row in range(self.registrationTable.rowCount):
+            item = self.registrationTable.item(row, 0)
+            if item is not None and item.text().strip():
+                rows[item.text().strip()] = row
+
+        origin = plate["origin"]
+        for marker in plate["markers"]:
+            label = marker["label"]
+            virtual = (origin[0] + marker["mm"][0],
+                       origin[1] + marker["mm"][1],
+                       origin[2] + marker["z"])
+            row = rows.get(label)
+            if row is None:
+                row = self.registrationTable.rowCount
+                self.registrationTable.insertRow(row)
+                self.registrationTable.setItem(
+                    row, 0, qt.QTableWidgetItem(label))
+                for column in range(4, 7):
+                    self.registrationTable.setItem(
+                        row, column, qt.QTableWidgetItem("0"))
+                rows[label] = row
+            for column, value in enumerate(virtual, start=1):
+                self.registrationTable.setItem(
+                    row, column, qt.QTableWidgetItem(f"{value:g}"))
+        self.registrationStatusLabel.text = (
+            "registration: virtual coordinates synced from the plate; the "
+            "measured real mm are unchanged")
+
+    def onRegistrationFit(self, checked=False):
+        """Fit the rigid transform and write the solved map beside the logs."""
+        from datetime import datetime
+
+        from targeting import registration
+
+        try:
+            config = self._registration_from_panel()
+        except RuntimeError as exc:
+            self.registrationStatusLabel.text = f"registration: {exc}"
+            return
+        if not config["fittable"]:
+            self.registrationFit = None
+            self.registrationStatusLabel.text = f"registration: {config['note']}"
+            return
+        try:
+            fit = registration.fit_registration(config)
+        except (RuntimeError, ValueError) as exc:
+            self.registrationFit = None
+            self.registrationStatusLabel.text = f"registration: {exc}"
+            return
+
+        self.registrationFit = fit
+        text = "registration: " + registration.fit_note(fit)
+        try:
+            import json
+
+            payload = registration.fit_payload(fit, config)
+            payload["when"] = datetime.now().isoformat(timespec="seconds")
+            LOGS_DIR.mkdir(parents=True, exist_ok=True)
+            path = LOGS_DIR / "registration-solved.json"
+            temporary = path.with_name(path.name + ".tmp")
+            temporary.write_text(json.dumps(payload, indent=2) + "\n",
+                                 encoding="utf-8")
+            temporary.replace(path)
+            text += f"\nsolved map written to {path}"
+        except OSError as exc:
+            text += f"\nWARNING: could not write the solved map: {exc}"
+        self.registrationStatusLabel.text = text
+
+    def onRegistrationMap(self, checked=False):
+        """Map the last placed virtual target to the real frame."""
+        from datetime import datetime
+
+        from targeting.registration import apply_transform
+
+        if self.registrationFit is None:
+            self.registrationStatusLabel.text = (
+                "registration: fit the markers first")
+            return
+        if self.lastCube is None:
+            self.registrationStatusLabel.text = (
+                "registration: place a target in the virtual scene first")
+            return
+        try:
+            real = apply_transform(self.registrationFit, self.lastCube)
+        except (KeyError, TypeError, ValueError) as exc:
+            self.registrationStatusLabel.text = f"registration: {exc}"
+            return
+        self.lastReal = tuple(float(value) for value in real)
+        frame = self.registrationFit["real_frame"]
+        cube = self.lastCube
+        text = (
+            f"real {frame}: ({real[0]:.2f}, {real[1]:.2f}, {real[2]:.2f}) mm\n"
+            f"virtual cube: ({cube[0]:.2f}, {cube[1]:.2f}, {cube[2]:.2f}) mm"
+        )
+        self.registrationStatusLabel.text = text
+        try:
+            import json
+
+            payload = {
+                "when": datetime.now().isoformat(timespec="seconds"),
+                "real_frame": frame,
+                "virtual_mm": [float(value) for value in cube],
+                "real_mm": [float(value) for value in real],
+            }
+            LOGS_DIR.mkdir(parents=True, exist_ok=True)
+            path = LOGS_DIR / "registration-last.json"
+            temporary = path.with_name(path.name + ".tmp")
+            temporary.write_text(json.dumps(payload, indent=2) + "\n",
+                                 encoding="utf-8")
+            temporary.replace(path)
+        except OSError as exc:
+            self.registrationStatusLabel.text += (
+                f"\nWARNING: could not write the last map: {exc}")
+
+    def onRegistrationSave(self, checked=False):
+        from targeting import registration
+
+        try:
+            config = self._registration_from_panel()
+            path = registration.save_registration(
+                config, registration.DEFAULT_PATH)
+        except (RuntimeError, OSError) as exc:
+            self.registrationStatusLabel.text = f"registration: {exc}"
+            return
+        self.registrationStatusLabel.text = (
+            f"registration saved to {path}"
+            + ("" if config["fittable"] else f" ({config['note']})"))
+
     # -- the live camera stream ------------------------------------------
 
     def onCameraLayoutToggled(self, checked):
@@ -1182,6 +1502,8 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
     def onClear(self, checked=False):
         self.logic.clear_targets()
         self.lastLabel.text = "no target yet"
+        self.lastCube = None
+        self.lastReal = None
         self.update_counts()
 
     def onOpenLog(self, checked=False):
