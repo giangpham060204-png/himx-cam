@@ -98,8 +98,9 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
             "Pick targets (click Red/Green/Yellow)")
         self.pickBox.toolTip = (
             "When ticked, a click in Red, Green or Yellow places a target at "
-            "the clicked pixel and the slice slider's depth. The 3D view is "
-            "for viewing, not placing.")
+            "the clicked pixel and the slice slider's depth. A target can be "
+            "dragged in the 3D view; the orange plate markers are locked and "
+            "cannot be moved.")
         form.addRow(self.pickBox)
 
         # The camera-click (triangulation) controls moved to Advanced: the

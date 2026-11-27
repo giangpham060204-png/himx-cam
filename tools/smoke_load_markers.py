@@ -153,6 +153,23 @@ def main():
     check("no ring is drawn",
           slicer.mrmlScene.GetFirstNodeByName("MarkerPlateOutline") is None)
 
+    plate_display = node.GetDisplayNode() if node is not None else None
+    check("plate markers are locked and non-selectable",
+          node is not None and node.GetLocked()
+          and not node.GetSelectable()
+          and plate_display is not None
+          and not plate_display.GetSelectable(),
+          f"locked={None if node is None else node.GetLocked()}")
+    check("plate handles are not interactive",
+          plate_display is not None
+          and not plate_display.GetHandlesInteractive())
+    check("plate colour is orange, not the target blue",
+          plate_display is not None
+          and tuple(round(value, 3) for value in plate_display.GetColor())
+          == tuple(round(value, 3) for value in scene.PLATE_COLOUR)
+          and tuple(scene.PLATE_COLOUR) != (0.2, 0.4, 1.0),
+          f"colour={None if plate_display is None else plate_display.GetColor()}")
+
     expected = [cube_to_ras((plate["origin"][0] + marker["mm"][0],
                              plate["origin"][1] + marker["mm"][1],
                              plate["origin"][2] + marker["z"]), frame)

@@ -31,7 +31,10 @@ OUTLINE_NODE = "MarkerPlateOutline"  # old scenes only; removed on apply
 CLICKS_NODE = "MarkerClicks"
 CAMERA_NAME = "c1"
 CAMERA_NAMES = ("c1", "c2", "c3")
-PLATE_COLOUR = (1.00, 0.82, 0.25)
+# Orange, deliberately different from the blue Targets. The plate is a
+# reference: it is locked and non-selectable so a stray 3D-view drag cannot
+# move a declared marker.
+PLATE_COLOUR = (1.00, 0.55, 0.10)
 GLYPH_SCALE = 3.0
 
 
@@ -107,6 +110,35 @@ def _plate_ras(cube, frame):
     return ras
 
 
+def _reference_only(node, display):
+    """Lock the plate and take it out of the 3D-view interaction.
+
+    The plate is a declared reference, not a target: a stray drag must not
+    move a marker. The node stays visible; Slicer's native markups lock is
+    what prevents the move, and making it non-selectable keeps a click from
+    starting one. The blue Targets remain draggable.
+    """
+    for target, setter_name, value in (
+            (node, "SetLocked", True),
+            (node, "SetSelectable", False),
+            (display, "SetSelectable", False),
+            (display, "SetHandlesInteractive", False),
+            (display, "SetVisibility3D", True),
+    ):
+        setter = getattr(target, setter_name, None)
+        if callable(setter):
+            try:
+                setter(value)
+            except Exception:  # noqa: BLE001 - display only
+                pass
+    selected = getattr(node, "SetSelected", None)
+    if callable(selected):
+        try:
+            selected(False)
+        except Exception:  # noqa: BLE001 - display only
+            pass
+
+
 def build_plate(plate, frame=None):
     """Draw the markers at their place in the cube.
 
@@ -117,10 +149,16 @@ def build_plate(plate, frame=None):
     frame = Frame.load(FRAME_PATH) if frame is None else frame
     view_ids = _cube_view_ids()
     node = _node(PLATE_NODE, "vtkMRMLMarkupsFiducialNode")
+    unlock = getattr(node, "SetLocked", None)
+    if callable(unlock):
+        unlock(False)  # a previous apply locked it; adding points needs it open
     node.RemoveAllControlPoints()
     display = node.GetDisplayNode()
     display.SetColor(*PLATE_COLOUR)
     display.SetSelectedColor(*PLATE_COLOUR)
+    active = getattr(display, "SetActiveColor", None)
+    if callable(active):
+        active(*PLATE_COLOUR)
     display.SetPointLabelsVisibility(True)
     display.SetGlyphScale(GLYPH_SCALE)
     display.SetVisibility(True)
@@ -138,6 +176,7 @@ def build_plate(plate, frame=None):
     stale = slicer.mrmlScene.GetFirstNodeByName(OUTLINE_NODE)
     if stale is not None:
         slicer.mrmlScene.RemoveNode(stale)
+    _reference_only(node, display)
     return node
 
 

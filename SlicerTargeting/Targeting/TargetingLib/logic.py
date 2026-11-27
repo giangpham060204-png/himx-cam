@@ -562,6 +562,23 @@ class TargetingLogic(ScriptedLoadableModuleLogic):
         display = self._display(node, (0.2, 0.4, 1.0))
         display.SetPointLabelsVisibility(True)  # current setter (not ...Visible)
         display.SetGlyphScale(4.0)
+        # Targets are the editable points: native Slicer markups, unlocked and
+        # selectable, so a left-drag on the point in the 3D view moves it. The
+        # plate markers are locked and orange instead. (HandlesInteractive is
+        # for line/plane handles; turning it on for a fiducial makes Slicer
+        # ask for a handle index that does not exist.)
+        for target, setter_name, value in (
+                (node, "SetLocked", False),
+                (node, "SetSelectable", True),
+                (display, "SetSelectable", True),
+                (display, "SetVisibility3D", True),
+        ):
+            setter = getattr(target, setter_name, None)
+            if callable(setter):
+                try:
+                    setter(value)
+                except Exception:  # noqa: BLE001 - display only
+                    pass
         return node
 
     def move_tip(self, ras):

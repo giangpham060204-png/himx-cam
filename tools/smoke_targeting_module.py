@@ -311,6 +311,19 @@ def main():
             f"label={label} error={point_error}",
         )
 
+        targets_display = (targets.GetDisplayNode()
+                           if targets is not None else None)
+        check(
+            "targets are unlocked and selectable in 3D",
+            targets is not None
+            and not targets.GetLocked()
+            and targets.GetSelectable()
+            and targets_display is not None
+            and targets_display.GetSelectable()
+            and targets_display.GetVisibility3D(),
+            f"locked={None if targets is None else targets.GetLocked()}",
+        )
+
         # 2b. a click far outside the field must be refused, loudly
         placed_before = widget.logic.placed
         rejected_before = widget.logic.rejected
