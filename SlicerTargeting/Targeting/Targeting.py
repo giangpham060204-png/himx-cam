@@ -1312,10 +1312,17 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
             self.realTargetLabel.text = (
                 "mapped target: fit the markers first")
             return
-        if self.lastCube is None:
+        try:
+            cube = self.logic.last_target_cube()
+        except Exception:  # noqa: BLE001 - fall back to the click cache
+            cube = None
+        if cube is None:
+            cube = self.lastCube
+        if cube is None:
             self.realTargetLabel.text = (
                 "mapped target: place a target in the virtual scene first")
             return
+        self.lastCube = tuple(float(value) for value in cube)
         try:
             real = apply_transform(self.registrationFit, self.lastCube)
         except (KeyError, TypeError, ValueError) as exc:

@@ -581,6 +581,23 @@ class TargetingLogic(ScriptedLoadableModuleLogic):
                     pass
         return node
 
+    def last_target_cube(self):
+        """The last target's *current* cube position, or None.
+
+        Read from the markups node, not from the click-time cache: a target
+        dragged in the 3D view must map from where it is now, not from where
+        it was first placed.
+        """
+        node = slicer.mrmlScene.GetFirstNodeByName(TARGETS_NODE_NAME)
+        if node is None or not node.IsA("vtkMRMLMarkupsFiducialNode"):
+            return None
+        count = node.GetNumberOfControlPoints()
+        if count == 0:
+            return None
+        ras = node.GetNthControlPointPosition(count - 1)
+        frame = bridge.live_frame()
+        return tuple(float(value) for value in ras_to_cube(ras, frame))
+
     def move_tip(self, ras):
         import vtk  # noqa: PLC0415
 
@@ -636,6 +653,15 @@ class TargetingLogic(ScriptedLoadableModuleLogic):
             # not survive as an orphan the operator cannot explain.
             node.RemoveNthControlPoint(index)
             raise
+        # Make the list the selected markups node: Slicer's 3D point drag is
+        # attached to the selected node, and the just-placed point is the one
+        # the operator is about to adjust.
+        selected = getattr(node, "SetSelected", None)
+        if callable(selected):
+            try:
+                selected(True)
+            except Exception:  # noqa: BLE001 - selection is best effort
+                pass
 
         outcome = {
             "status": "placed",

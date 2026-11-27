@@ -324,6 +324,26 @@ def main():
             f"locked={None if targets is None else targets.GetLocked()}",
         )
 
+        frame = bridge.live_frame()
+        targets.SetNthControlPointPosition(
+            0, *cube_to_ras((30.0, 10.0, 0.0), frame))
+        check(
+            "the last target is read from the live node",
+            tuple(round(value, 3)
+                  for value in widget.logic.last_target_cube())
+            == (30.0, 10.0, 0.0),
+            f"cube={widget.logic.last_target_cube()}",
+        )
+        targets.SetNthControlPointPosition(
+            0, *cube_to_ras((40.0, 15.0, 5.0), frame))
+        check(
+            "a dragged target updates the mapped cube",
+            tuple(round(value, 3)
+                  for value in widget.logic.last_target_cube())
+            == (40.0, 15.0, 5.0),
+            f"cube={widget.logic.last_target_cube()}",
+        )
+
         # 2b. a click far outside the field must be refused, loudly
         placed_before = widget.logic.placed
         rejected_before = widget.logic.rejected
