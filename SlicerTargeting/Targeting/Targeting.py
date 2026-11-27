@@ -81,6 +81,15 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
         self.statusLabel.wordWrap = True
         form.addRow(self.statusLabel)
 
+        # The virtual -> real result lives at the top, not inside the
+        # registration section: it must stay visible when the panel is tall
+        # or the registration section is scrolled.
+        self.realTargetLabel = qt.QLabel(
+            "real target: none — fit the markers, place a target, then Map")
+        self.realTargetLabel.wordWrap = True
+        self.realTargetLabel.setStyleSheet("font-weight: bold;")
+        form.addRow(self.realTargetLabel)
+
         # The camera-click (triangulation) controls moved to Advanced: the
         # marker plate is the workflow in use.
 
@@ -161,8 +170,11 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
         # Everything the markers need, so the JSON never has to be edited by
         # hand: size, placement, one row per marker, apply/save/load.
         self.markerPanel = ctk.ctkCollapsibleButton()
-        self.markerPanel.text = "Marker plate"
-        self.markerPanel.collapsed = False
+        self.markerPanel.text = "Marker plate (camera check)"
+        # The virtual -> real registration is the client's workflow now; the
+        # plate panel stays available but collapsed so its table cannot push
+        # the registration and the mapped-target readout off the panel.
+        self.markerPanel.collapsed = True
         form.addRow(self.markerPanel)
         marker_form = qt.QFormLayout(self.markerPanel)
 
@@ -214,6 +226,7 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
             self.markerTable.setColumnWidth(column, 66)
         self.markerTable.verticalHeader().setVisible(False)
         self.markerTable.setMinimumHeight(180)
+        self.markerTable.setMaximumHeight(200)
         self.markerTable.toolTip = (
             "Plate millimetres, origin at the plate's lower-left corner. "
             "MarkerClicks points are matched to these rows by order, so click "
@@ -262,9 +275,18 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
             "name is recorded in every mapped target.")
         registration_form.addRow("real frame", self.realFrameEdit)
 
+        self.registrationHint = qt.QLabel(
+            "V* = marker position in the Slicer cube (mm). R* = the same "
+            "marker measured in the real frame (mm). These are the "
+            "registration inputs, not the picked target; the mapped target "
+            "appears at the top of the panel after Map. Double-click a cell "
+            "to edit it.")
+        self.registrationHint.wordWrap = True
+        registration_form.addRow(self.registrationHint)
+
         self.registrationTable = qt.QTableWidget(0, 7)
         self.registrationTable.setHorizontalHeaderLabels(
-            ["label", "vx", "vy", "vz", "rx", "ry", "rz"])
+            ["marker", "Vx", "Vy", "Vz", "Rx", "Ry", "Rz"])
         try:
             self.registrationTable.horizontalHeader().setSectionResizeMode(
                 0, qt.QHeaderView.Stretch)
@@ -274,7 +296,8 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
         for column in range(1, 7):
             self.registrationTable.setColumnWidth(column, 52)
         self.registrationTable.verticalHeader().setVisible(False)
-        self.registrationTable.setMinimumHeight(140)
+        self.registrationTable.setMinimumHeight(120)
+        self.registrationTable.setMaximumHeight(150)
         self.registrationTable.toolTip = (
             "v* = virtual Slicer cube millimetres; r* = the same marker "
             "measured in the real frame. Three non-collinear markers are the "
@@ -703,6 +726,8 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
             ras = result["ras"]
             self.lastCube = tuple(float(value) for value in cube)
             self.lastReal = None
+            self.realTargetLabel.text = (
+                "mapped target: none — press Map for this target")
             self.lastLabel.text = (
                 f"Last: {view} view, depth {result['depth_mm']:.1f} mm\n"
                 f"Cube ({cube[0]:.1f}, {cube[1]:.1f}, {cube[2]:.1f}) mm\n"
@@ -1093,6 +1118,8 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
             self.registrationFit = None
             self.registrationStatusLabel.text = (
                 "registration: edited; fit the markers again")
+            self.realTargetLabel.text = (
+                "mapped target: none (registration edited)")
 
     def _fill_registration_table(self, registration):
         """Show a loaded registration in the panel fields."""
@@ -1157,6 +1184,7 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
         else:
             self.registrationStatusLabel.text = (
                 f"registration: {config['note']}; fill the measured mm")
+        self.realTargetLabel.text = "mapped target: none (registration loaded)"
 
     def onRegistrationLoad(self, checked=False):
         self._load_registration_panel()
@@ -1224,19 +1252,27 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
             config = self._registration_from_panel()
         except RuntimeError as exc:
             self.registrationStatusLabel.text = f"registration: {exc}"
+            self.realTargetLabel.text = (
+                "mapped target: none (registration invalid)")
             return
         if not config["fittable"]:
             self.registrationFit = None
             self.registrationStatusLabel.text = f"registration: {config['note']}"
+            self.realTargetLabel.text = (
+                "mapped target: none (registration not fittable)")
             return
         try:
             fit = registration.fit_registration(config)
         except (RuntimeError, ValueError) as exc:
             self.registrationFit = None
             self.registrationStatusLabel.text = f"registration: {exc}"
+            self.realTargetLabel.text = (
+                "mapped target: none (registration failed)")
             return
 
         self.registrationFit = fit
+        self.realTargetLabel.text = (
+            "mapped target: none — place a target and press Map")
         text = "registration: " + registration.fit_note(fit)
         try:
             import json
@@ -1261,26 +1297,25 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
         from targeting.registration import apply_transform
 
         if self.registrationFit is None:
-            self.registrationStatusLabel.text = (
-                "registration: fit the markers first")
+            self.realTargetLabel.text = (
+                "mapped target: fit the markers first")
             return
         if self.lastCube is None:
-            self.registrationStatusLabel.text = (
-                "registration: place a target in the virtual scene first")
+            self.realTargetLabel.text = (
+                "mapped target: place a target in the virtual scene first")
             return
         try:
             real = apply_transform(self.registrationFit, self.lastCube)
         except (KeyError, TypeError, ValueError) as exc:
-            self.registrationStatusLabel.text = f"registration: {exc}"
+            self.realTargetLabel.text = f"mapped target: {exc}"
             return
         self.lastReal = tuple(float(value) for value in real)
         frame = self.registrationFit["real_frame"]
         cube = self.lastCube
-        text = (
+        self.realTargetLabel.text = (
             f"real {frame}: ({real[0]:.2f}, {real[1]:.2f}, {real[2]:.2f}) mm\n"
             f"virtual cube: ({cube[0]:.2f}, {cube[1]:.2f}, {cube[2]:.2f}) mm"
         )
-        self.registrationStatusLabel.text = text
         try:
             import json
 
@@ -1506,6 +1541,8 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
         self.lastLabel.text = "no target yet"
         self.lastCube = None
         self.lastReal = None
+        self.realTargetLabel.text = (
+            "mapped target: none — place a target in the virtual scene")
         self.update_counts()
 
     def onOpenLog(self, checked=False):

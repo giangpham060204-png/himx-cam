@@ -129,8 +129,8 @@ def main():
         )
         check(
             "the mapped point is shown with its frame",
-            "real arm-base" in widget.registrationStatusLabel.text,
-            widget.registrationStatusLabel.text.replace("\n", " | "),
+            "real arm-base" in widget.realTargetLabel.text,
+            widget.realTargetLabel.text.replace("\n", " | "),
         )
         last = PROJECT_ROOT / "logs" / "registration-last.json"
         check(
@@ -143,8 +143,8 @@ def main():
         widget.onRegistrationMap()
         check(
             "mapping refuses before a fit",
-            "fit the markers first" in widget.registrationStatusLabel.text,
-            widget.registrationStatusLabel.text,
+            "fit the markers first" in widget.realTargetLabel.text,
+            widget.realTargetLabel.text,
         )
 
         # Collinear real markers must be refused, not fitted.
