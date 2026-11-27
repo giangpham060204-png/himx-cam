@@ -1994,7 +1994,7 @@ class TargetingLogic(ScriptedLoadableModuleLogic):
             self.prepare_camera_layout()
             layout.setLayout(CAMERA_LAYOUT_ID)
             slicer.app.processEvents()
-            self._fit_camera_row()
+            self._fit_view_splitters()
             for name in CAMERA_VIEWS:
                 widget = layout.sliceWidget(name)
                 if widget is None:
@@ -2010,18 +2010,32 @@ class TargetingLogic(ScriptedLoadableModuleLogic):
         slicer.app.processEvents()
         return self.camera_layout_active()
 
-    def _fit_camera_row(self):
-        """Give the camera row the height its 4:3 pictures want.
+    def _fit_view_splitters(self):
+        """Camera column at 4:3, and the four-up panes evenly split.
 
-        A layout description cannot express proportions, and the splitter's
-        default hands the camera row either a sliver or the whole window
-        depending on which side has the larger size hint. Setting the sizes
-        from the pane width makes each pane 4:3, so the 160x120 picture fills
-        it instead of sitting in black bars.
+        A layout description cannot express proportions, and the widgets do
+        not ask for the same size: the 3D view wants more width than a slice
+        view, so the row holding Yellow and the 3D view handed Yellow a
+        narrower pane than Red and Green got. Setting the sizes explicitly
+        makes the four panes equal and the camera panes 4:3.
+
+        Three panes stacked in the camera column are ``height/3`` tall each,
+        so a pane whose width is 4/3 of that fills the 160x120 picture instead
+        of leaving black bars. The column is clamped so a small window still
+        gives the four-up the larger half and a camera pane stays clickable.
         """
-        widget = slicer.app.layoutManager().sliceWidget(CAMERA_VIEWS[0])
-        if widget is None:
+        layout = slicer.app.layoutManager()
+        camera = layout.sliceWidget(CAMERA_VIEWS[0])
+        if camera is None:
             return
+        four_up = []
+        for name in ("Red", "Green", "Yellow"):
+            view = layout.sliceWidget(name)
+            if view is not None:
+                four_up.append(view.sliceView())
+        three_d = layout.threeDWidget(0)
+        if three_d is not None:
+            four_up.append(three_d.threeDView())
         main = slicer.util.mainWindow()
         splitters = (main.findChildren("QSplitter")
                      + main.findChildren("ctkSplitter"))
@@ -2030,18 +2044,29 @@ class TargetingLogic(ScriptedLoadableModuleLogic):
                 orientation = splitter.orientation
                 if callable(orientation):
                     orientation = orientation()
-                if (orientation != qt.Qt.Vertical
-                        or splitter.count() != 2
-                        or not splitter.isAncestorOf(widget)):
+                if splitter.count() != 2:
                     continue
+                holds_camera = splitter.isAncestorOf(camera)
+                holds_slice = any(splitter.isAncestorOf(view)
+                                  for view in four_up)
+                if not (holds_camera or holds_slice):
+                    continue
+                horizontal = orientation == qt.Qt.Horizontal
+                total = int(splitter.width if horizontal else splitter.height)
+                if total <= 0:
+                    continue
+                if horizontal and holds_camera:
+                    pane_height = (int(splitter.height)
+                                   / float(len(CAMERA_VIEWS)))
+                    first = int(round(pane_height * (4.0 / 3.0)))
+                    first = max(240, min(first, int(total * 0.5)))
+                else:
+                    first = total // 2
             except Exception:  # noqa: BLE001 - a deleted or odd widget
                 continue
-            total = int(splitter.height)
-            pane_width = max(1, int(splitter.width) // len(CAMERA_VIEWS))
-            wanted = int(round(pane_width * 0.75))   # 160x120 is 4:3
-            wanted = max(120, min(wanted, int(total * 0.55)))
-            splitter.setSizes([wanted, max(1, total - wanted)])
-            return
+            splitter.setSizes([first, max(1, total - first)])
+            # The camera column and the four-up rows are siblings in the same
+            # splitter tree; both get sized, so no early return.
 
     def _show_camera_views(self, nodes):
         """Put three scalar volumes into the three camera slice views."""

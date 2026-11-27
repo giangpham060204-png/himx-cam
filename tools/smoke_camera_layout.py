@@ -81,6 +81,7 @@ def main():
 
     import Targeting as targeting_module
     from TargetingLib import marker_plate as scene
+    from TargetingLib.logic import _LEFT_BUTTON, _MOUSE_PRESS
     from targeting import layouts
 
     panel = qt.QWidget()
@@ -104,6 +105,19 @@ def main():
           widget.logic.camera_layout_active(),
           f"active={widget.logic.camera_layout_active()}")
     widgets = {name: layout.sliceWidget(name) for name in layouts.CAMERA_VIEWS}
+    standard = {name: layout.sliceWidget(name).sliceView().isVisible()
+                for name in ("Red", "Green", "Yellow")}
+    check("the standard four-up is in the same layout",
+          all(standard.values()), f"{standard}")
+    four_up = {name: layout.sliceWidget(name).sliceView()
+               for name in ("Red", "Green", "Yellow")}
+    four_up["3D"] = layout.threeDWidget(0).threeDView()
+    widths = [view.width for view in four_up.values()]
+    heights = [view.height for view in four_up.values()]
+    check("the four-up panes are the same size",
+          max(widths) - min(widths) <= 2 and max(heights) - min(heights) <= 2,
+          f"widths={widths} heights={heights}")
+
     check("three camera panes and the 3D view exist",
           all(w is not None for w in widgets.values())
           and layout.threeDWidget(0) is not None,
@@ -180,6 +194,33 @@ def main():
     check("Ctrl+drag pans a camera pane",
           any(abs(a - b) > 1e-6 for a, b in zip(before_pan, after_pan)),
           f"{before_pan} -> {after_pan}")
+
+    # -- Slicer points still work in XY/XZ/YZ ------------------------------
+    widget.pickBox.checked = True
+    slicer.app.processEvents()
+    red_widget = layout.sliceWidget("Red")
+    red_view = red_widget.sliceView()
+    check("the XY view keeps its pick filter in the camera layout",
+          "Red" in widget.filters
+          and widget.filters["Red"][1].click_enabled,
+          f"filters={sorted(widget.filters)} "
+          f"enabled={widget.filters.get('Red', (None, None))[1].click_enabled}")
+
+    no_modifier = getattr(qt.Qt, "NoModifier", None)
+    if no_modifier is None:
+        no_modifier = qt.Qt.KeyboardModifier.NoModifier
+    press = qt.QMouseEvent(
+        _MOUSE_PRESS, qt.QPointF(red_view.width / 2.0, red_view.height / 2.0),
+        _LEFT_BUTTON, _LEFT_BUTTON, no_modifier)
+    placed_before = widget.logic.placed
+    qt.QApplication.sendEvent(widget.filters["Red"][0], press)
+    slicer.app.processEvents()
+    check("a press in the XY view still places a target",
+          widget.logic.placed == placed_before + 1,
+          f"placed={widget.logic.placed} lastClick={widget.lastClick} "
+          f"status={widget.statusLabel.text!r}")
+    widget.pickBox.checked = False
+    slicer.app.processEvents()
 
     # -- the plate follows the picture ------------------------------------
     plate = {

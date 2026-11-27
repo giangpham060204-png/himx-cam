@@ -95,12 +95,14 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
         real.addWidget(self.realCameraStopButton)
         form.addRow(real)
 
-        self.cameraLayoutButton = qt.QPushButton("Camera layout (3 feeds + 3D)")
+        self.cameraLayoutButton = qt.QPushButton(
+            "Camera layout (feeds + four-up)")
         self.cameraLayoutButton.setCheckable(True)
         self.cameraLayoutButton.toolTip = (
-            "Three camera panes above one wide 3D view. The feeds get their "
-            "own views (c1, c2, c3), so Red/Green/Yellow stay free and a "
-            "camera picture is never mistaken for a coordinate space.")
+            "Three camera panes in a left column, with the standard four-up "
+            "(Red/Green/Yellow + 3D) beside them. The feeds get their own "
+            "views (c1, c2, c3), so a camera picture is never mistaken for a "
+            "coordinate space, and the slice views keep working for points.")
         form.addRow(self.cameraLayoutButton)
 
         self.realCameraDeviceEdit = qt.QLineEdit("/dev/video0")
