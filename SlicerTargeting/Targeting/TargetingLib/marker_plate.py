@@ -180,6 +180,50 @@ def build_plate(plate, frame=None):
     return node
 
 
+def build_markers(points, frame=None):
+    """Draw label/cube points directly, without the plate/homography rules.
+
+    The merged marker table keeps V* in cube millimetres; drawing those does
+    not need the plate size or the four-point camera check. The camera check,
+    when four or more markers exist, runs separately on the plate view of the
+    same rows.
+    """
+    frame = Frame.load(FRAME_PATH) if frame is None else frame
+    view_ids = _cube_view_ids()
+    node = _node(PLATE_NODE, "vtkMRMLMarkupsFiducialNode")
+    unlock = getattr(node, "SetLocked", None)
+    if callable(unlock):
+        unlock(False)
+    node.RemoveAllControlPoints()
+    display = node.GetDisplayNode()
+    display.SetColor(*PLATE_COLOUR)
+    display.SetSelectedColor(*PLATE_COLOUR)
+    active = getattr(display, "SetActiveColor", None)
+    if callable(active):
+        active(*PLATE_COLOUR)
+    display.SetPointLabelsVisibility(True)
+    display.SetGlyphScale(GLYPH_SCALE)
+    display.SetVisibility(True)
+    display.SetVisibility2D(True)
+    _restrict(display, view_ids)
+
+    for label, cube in points:
+        ras = cube_to_ras(cube, frame)
+        try:
+            check_in_field_ras(dict(zip(("R", "A", "S"), ras)), frame)
+        except OutOfFieldError as exc:
+            raise RuntimeError(
+                f"marker {label} is outside the cube: {exc}") from None
+        index = node.AddControlPoint(ras[0], ras[1], ras[2])
+        node.SetNthControlPointLabel(index, label)
+
+    stale = slicer.mrmlScene.GetFirstNodeByName(OUTLINE_NODE)
+    if stale is not None:
+        slicer.mrmlScene.RemoveNode(stale)
+    _reference_only(node, display)
+    return node
+
+
 def _view_showing(volume_name):
     """(view name, widget, volume) for the view whose background is that volume.
 

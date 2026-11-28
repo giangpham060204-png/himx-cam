@@ -131,6 +131,14 @@ def main():
               widget.markerTable.rowCount == before - 1,
               f"rows={widget.markerTable.rowCount}")
 
+        widget.markerApplyButton.click()
+        plate_node = slicer.mrmlScene.GetFirstNodeByName("MarkerPlate")
+        check("Apply to cube draws even with fewer than four markers",
+              plate_node is not None
+              and plate_node.GetNumberOfControlPoints() == before - 1
+              and "camera check needs" in widget.markerStatusLabel.text,
+              widget.markerStatusLabel.text)
+
         # Place one target with a real click through the Red-view filter.
         red_widget = slicer.app.layoutManager().sliceWidget("Red")
         red_view = red_widget.sliceView()
@@ -148,9 +156,9 @@ def main():
               and targets is not None
               and targets.GetNumberOfControlPoints() == 1,
               f"placed={widget.logic.placed}")
-        check("the target is a normal blue point",
+        check("the target is a named blue point",
               targets is not None
-              and targets.GetDisplayNode().GetPointLabelsVisibility() is False
+              and targets.GetDisplayNode().GetPointLabelsVisibility() is True
               and tuple(round(value, 3)
                         for value in targets.GetDisplayNode().GetColor())
               == (0.2, 0.4, 1.0)

@@ -252,8 +252,7 @@ def main():
     check("Apply draws the plate",
           slicer.mrmlScene.GetFirstNodeByName("MarkerPlate") is not None)
     check("Apply reports the check in the panel",
-          "residual" in widget.markerStatusLabel.text
-          or "not checked" in widget.markerStatusLabel.text,
+          "camera check" in widget.markerStatusLabel.text,
           widget.markerStatusLabel.text.splitlines()[0]
           if widget.markerStatusLabel.text else "")
 

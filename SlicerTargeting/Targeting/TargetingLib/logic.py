@@ -560,9 +560,9 @@ class TargetingLogic(ScriptedLoadableModuleLogic):
                 "vtkMRMLMarkupsFiducialNode", TARGETS_NODE_NAME
             )
         display = self._display(node, (0.2, 0.4, 1.0))
-        # Targets are plain points, not labelled fiducials: blue spheres with
-        # no label, distinct from the orange, labelled, locked plate.
-        display.SetPointLabelsVisibility(False)
+        # Targets are blue spheres with their name label (T1, T2...), distinct
+        # from the orange, locked plate markers.
+        display.SetPointLabelsVisibility(True)
         display.SetGlyphScale(5.0)
         glyph = getattr(display, "SetGlyphTypeFromString", None)
         if callable(glyph):

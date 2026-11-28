@@ -592,6 +592,30 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
         }
         return validate_plate(data, "the panel")
 
+    def _virtual_markers_from_panel(self):
+        """The merged table's V columns as (label, cube) pairs."""
+        points = []
+        for row in range(self.markerTable.rowCount):
+            label_item = self.markerTable.item(row, 0)
+            label = label_item.text().strip() if label_item is not None else ""
+            if not label:
+                raise RuntimeError(f"row {row + 1} has no label")
+            values = []
+            for column, name in ((1, "Vx"), (2, "Vy"), (3, "Vz")):
+                item = self.markerTable.item(row, column)
+                text = item.text().strip() if item is not None else ""
+                if not text and name == "Vz":
+                    text = "0"
+                if not text:
+                    raise RuntimeError(f"{label} has no {name}")
+                try:
+                    values.append(float(text))
+                except ValueError:
+                    raise RuntimeError(
+                        f"{label}: {name} {text!r} is not a number") from None
+            points.append((label, tuple(values)))
+        return points
+
     def onMarkerAdd(self, checked=False):
         row = self.markerTable.rowCount
         self.markerTable.insertRow(row)
@@ -619,20 +643,32 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
             self.markerTable.removeRow(row)
 
     def onMarkerApply(self, checked=False):
-        """Draw the plate in the cube and check it against the live picture."""
+        """Draw the V markers in the cube; check the camera only if 4+."""
         from TargetingLib import marker_plate as scene
 
         try:
-            plate = self._plate_from_panel()
-        except RuntimeError as exc:
-            self.markerStatusLabel.text = f"markers: {exc}"
-            return
-        try:
-            result = scene.apply(plate)
+            points = self._virtual_markers_from_panel()
+            scene.build_markers(points)
         except Exception as exc:  # noqa: BLE001 - shown to the operator
             self.markerStatusLabel.text = f"markers: {exc}"
             return
-        self.markerStatusLabel.text = result["text"]
+
+        text = f"markers: drew {len(points)} at their V positions"
+        if len(points) < 4:
+            text += "; camera check needs at least four markers"
+        else:
+            try:
+                plate = self._plate_from_panel()
+                checked = scene.check(plate)
+                if checked["status"] == "checked":
+                    text += (f"; camera check residual "
+                             f"{checked['residual_mm']:.2f} mm")
+                else:
+                    text += (f"; camera check {checked['status']}: "
+                             f"{checked['note']}")
+            except Exception as exc:  # noqa: BLE001 - shown to the operator
+                text += f"; camera check skipped: {exc}"
+        self.markerStatusLabel.text = text
 
     def onMarkerSave(self, checked=False):
         from targeting import registration
