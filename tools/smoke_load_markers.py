@@ -226,6 +226,13 @@ def main():
     # The panel is the part the operator actually uses; a working module
     # underneath is not enough if the table cannot be read or saved.
     import Targeting as targeting_module
+    from targeting import registration as registration_module
+
+    # This smoke is about the plate: keep the merged table on the plate file
+    # by pointing the registration loader at a path that does not exist.
+    registration_module.DEFAULT_PATH = pathlib.Path(
+        "/tmp/opencode/no-registration-smoke.json")
+    registration_module.DEFAULT_PATH.unlink(missing_ok=True)
 
     panel = qt.QWidget()
     panel.setLayout(qt.QVBoxLayout())
@@ -256,7 +263,8 @@ def main():
           widget.markerStatusLabel.text.startswith("markers:")
           and "not a number" in widget.markerStatusLabel.text,
           widget.markerStatusLabel.text)
-    widget.markerTable.item(1, 1).setText("60")
+    widget.markerTable.item(1, 1).setText(
+        f"{plate['origin'][0] + plate['markers'][1]['mm'][0]:g}")
 
     before = scene.config.DEFAULT_PATH.stat().st_mtime_ns
     widget.onMarkerSave()

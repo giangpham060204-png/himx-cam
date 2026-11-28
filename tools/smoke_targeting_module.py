@@ -107,30 +107,25 @@ def main():
             and not hasattr(widget, "markerLoadButton"),
         )
         check(
-            "the virtual -> real table is configurable",
-            widget.registrationTable.columnCount == 7
+            "the merged table is the virtual -> real table",
+            widget.markerTable.columnCount == 7
+            and widget.registrationTable is widget.markerTable
             and all(hasattr(widget, name) for name in
                     ("registrationFitButton", "registrationMapButton",
-                     "registrationSaveButton", "registrationAddButton",
-                     "registrationRemoveButton"))
+                     "markerSaveButton"))
             and not any(hasattr(widget, name) for name in
-                        ("registrationLoadButton", "registrationSyncButton")),
+                        ("registrationAddButton", "registrationRemoveButton",
+                         "registrationSaveButton", "registrationLoadButton",
+                         "registrationSyncButton")),
         )
         check("the real-target readout is at the top",
               hasattr(widget, "realTargetLabel")
               and widget.realTargetLabel.text.startswith("real target:"))
 
-        before = widget.registrationTable.rowCount
-        widget.registrationTable.setCurrentCell(before - 1, 0)
-        widget.onRegistrationRemove()
-        check("registration Remove deletes the selected row",
-              widget.registrationTable.rowCount == before - 1,
-              f"rows={widget.registrationTable.rowCount}")
-
         before = widget.markerTable.rowCount
         widget.markerTable.setCurrentCell(before - 1, 0)
         widget.onMarkerRemove()
-        check("plate Remove deletes the selected row",
+        check("the merged table Remove deletes the selected row",
               widget.markerTable.rowCount == before - 1,
               f"rows={widget.markerTable.rowCount}")
 

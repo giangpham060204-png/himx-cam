@@ -172,7 +172,7 @@ def main():
         # Save and load round-trip through the patched path.
         widget._fill_registration_table(registration.load_registration(
             registration.DEFAULT_PATH))
-        widget.onRegistrationSave()
+        widget.onMarkerSave()
         saved = json.loads(registration.DEFAULT_PATH.read_text(encoding="utf-8"))
         check(
             "save writes the measured registration",
@@ -181,7 +181,7 @@ def main():
         )
         saved["real_frame"] = "bench"
         registration.DEFAULT_PATH.write_text(json.dumps(saved), encoding="utf-8")
-        widget._load_registration_panel()
+        widget._load_marker_panel()
         check(
             "load reads the real frame and rows",
             widget.realFrameEdit.text == "bench"

@@ -161,12 +161,14 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
         self.videoNote.wordWrap = True
         video_form.addRow(self.videoNote)
 
-        # -- the fiducial plate -----------------------------------------
-        # The plate is the reference marker set for the camera check and the
-        # declared frame. Everything is editable here; the JSON is the file.
+        # -- the fiducial markers ----------------------------------------
+        # One marker table for both jobs: V* drives the plate/camera check,
+        # V* + R* drive the rigid virtual -> real transform. The plate size
+        # and cube origin are only the camera-check frame; the registration
+        # uses the absolute V/R millimetres.
         self.markerPanel = ctk.ctkCollapsibleButton()
-        self.markerPanel.text = "Fiducial plate"
-        self.markerPanel.collapsed = True
+        self.markerPanel.text = "Fiducial markers (virtual → real)"
+        self.markerPanel.collapsed = False
         form.addRow(self.markerPanel)
         marker_form = qt.QFormLayout(self.markerPanel)
 
@@ -206,24 +208,42 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
         origin_row.addWidget(self.markerOriginZSpin)
         marker_form.addRow("cube origin", origin_row)
 
-        self.markerTable = qt.QTableWidget(0, 4)
+        self.realFrameEdit = qt.QLineEdit("arm-base")
+        self.realFrameEdit.toolTip = (
+            "Name of the measured real frame. The R* numbers are in it.")
+        marker_form.addRow("real frame", self.realFrameEdit)
+
+        self.registrationHint = qt.QLabel(
+            "V* = marker position in the Slicer cube (mm). R* = the same "
+            "marker measured in the real frame (mm). One table, one marker "
+            "set. B1/B2/T1 are just labels: here they mean the two balls and "
+            "the triangle; rename them to match the physical markers. "
+            "Double-click a cell to edit. Fit needs 3 non-collinear markers; "
+            "the camera check needs 4 coplanar markers.")
+        self.registrationHint.wordWrap = True
+        marker_form.addRow(self.registrationHint)
+
+        self.markerTable = qt.QTableWidget(0, 7)
         self.markerTable.setHorizontalHeaderLabels(
-            ["label", "x mm", "y mm", "z mm"])
+            ["marker", "Vx", "Vy", "Vz", "Rx", "Ry", "Rz"])
         try:
             self.markerTable.horizontalHeader().setSectionResizeMode(
                 0, qt.QHeaderView.Stretch)
         except Exception:  # noqa: BLE001 - older Qt spelling
             self.markerTable.horizontalHeader().setStretchLastSection(True)
-        for column in (1, 2, 3):
-            self.markerTable.setColumnWidth(column, 66)
+        for column in range(1, 7):
+            self.markerTable.setColumnWidth(column, 52)
         self.markerTable.verticalHeader().setVisible(False)
-        self.markerTable.setMinimumHeight(180)
-        self.markerTable.setMaximumHeight(200)
+        self.markerTable.setMinimumHeight(140)
+        self.markerTable.setMaximumHeight(170)
         self.markerTable.toolTip = (
-            "Plate millimetres, origin at the plate's lower-left corner. "
-            "MarkerClicks points are matched to these rows by order, so click "
-            "in the same order the rows are listed. z is optional.")
+            "V* = virtual Slicer cube millimetres; R* = the same marker "
+            "measured in the real frame. Three non-collinear markers are the "
+            "minimum; four or more make the residual a stronger check.")
         marker_form.addRow(self.markerTable)
+
+        # The registration handlers use the older name; it is the same table.
+        self.registrationTable = self.markerTable
 
         marker_buttons = qt.QHBoxLayout()
         self.markerAddButton = qt.QPushButton("Add")
@@ -232,69 +252,12 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
         self.markerAddButton.toolTip = "Append one marker row"
         self.markerRemoveButton.toolTip = "Remove the selected row"
         self.markerApplyButton.toolTip = (
-            "Draw the plate in the cube and check it against camera 1")
+            "Draw the plate in the cube and check it against camera 1; needs "
+            "at least four markers")
         marker_buttons.addWidget(self.markerAddButton)
         marker_buttons.addWidget(self.markerRemoveButton)
         marker_buttons.addWidget(self.markerApplyButton)
         marker_form.addRow(marker_buttons)
-
-        marker_file_row = qt.QHBoxLayout()
-        self.markerSaveButton = qt.QPushButton("Save")
-        self.markerSaveButton.toolTip = (
-            "Write marker-plate.json; the file auto-loads next time")
-        marker_file_row.addWidget(self.markerSaveButton)
-        marker_form.addRow(marker_file_row)
-
-        self.markerStatusLabel = qt.QLabel("markers: not applied")
-        self.markerStatusLabel.wordWrap = True
-        marker_form.addRow(self.markerStatusLabel)
-
-        # -- virtual -> real --------------------------------------------
-        # The client's flow: pick in the virtual scene, map through measured
-        # markers to the real frame. The camera is not in this coordinate
-        # path; it can verify the markers, but the transform is rigid.
-        self.registrationPanel = ctk.ctkCollapsibleButton()
-        self.registrationPanel.text = "Virtual → real (measured markers)"
-        self.registrationPanel.collapsed = False
-        form.addRow(self.registrationPanel)
-        registration_form = qt.QFormLayout(self.registrationPanel)
-
-        self.realFrameEdit = qt.QLineEdit("arm-base")
-        self.realFrameEdit.toolTip = (
-            "Name of the measured frame. The r* numbers below are in it; the "
-            "name is recorded in every mapped target.")
-        registration_form.addRow("real frame", self.realFrameEdit)
-
-        self.registrationHint = qt.QLabel(
-            "V* = marker position in the Slicer cube (mm). R* = the same "
-            "marker measured in the real frame (mm). These are the "
-            "registration inputs, not the picked target; the mapped target "
-            "appears at the top of the panel after Map. B1/B2/T1 are just "
-            "labels: here they mean the two balls and the triangle; rename "
-            "them to match the physical markers. Double-click a cell to edit "
-            "it.")
-        self.registrationHint.wordWrap = True
-        registration_form.addRow(self.registrationHint)
-
-        self.registrationTable = qt.QTableWidget(0, 7)
-        self.registrationTable.setHorizontalHeaderLabels(
-            ["marker", "Vx", "Vy", "Vz", "Rx", "Ry", "Rz"])
-        try:
-            self.registrationTable.horizontalHeader().setSectionResizeMode(
-                0, qt.QHeaderView.Stretch)
-        except Exception:  # noqa: BLE001 - older Qt spelling
-            self.registrationTable.horizontalHeader().setStretchLastSection(
-                True)
-        for column in range(1, 7):
-            self.registrationTable.setColumnWidth(column, 52)
-        self.registrationTable.verticalHeader().setVisible(False)
-        self.registrationTable.setMinimumHeight(120)
-        self.registrationTable.setMaximumHeight(150)
-        self.registrationTable.toolTip = (
-            "v* = virtual Slicer cube millimetres; r* = the same marker "
-            "measured in the real frame. Three non-collinear markers are the "
-            "minimum; four or more make the residual a stronger check.")
-        registration_form.addRow(self.registrationTable)
 
         registration_buttons = qt.QHBoxLayout()
         self.registrationFitButton = qt.QPushButton("Fit")
@@ -306,28 +269,23 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
             "frame")
         registration_buttons.addWidget(self.registrationFitButton)
         registration_buttons.addWidget(self.registrationMapButton)
-        registration_form.addRow(registration_buttons)
+        marker_form.addRow(registration_buttons)
 
-        registration_edit_row = qt.QHBoxLayout()
-        self.registrationAddButton = qt.QPushButton("Add marker")
-        self.registrationRemoveButton = qt.QPushButton("Remove")
-        self.registrationAddButton.toolTip = "Append one marker row"
-        self.registrationRemoveButton.toolTip = "Remove the selected row"
-        registration_edit_row.addWidget(self.registrationAddButton)
-        registration_edit_row.addWidget(self.registrationRemoveButton)
-        registration_form.addRow(registration_edit_row)
+        marker_file_row = qt.QHBoxLayout()
+        self.markerSaveButton = qt.QPushButton("Save")
+        self.markerSaveButton.toolTip = (
+            "Write marker-registration.json and, with 4+ markers, "
+            "marker-plate.json; both auto-load next time")
+        marker_file_row.addWidget(self.markerSaveButton)
+        marker_form.addRow(marker_file_row)
 
-        registration_file_row = qt.QHBoxLayout()
-        self.registrationSaveButton = qt.QPushButton("Save")
-        self.registrationSaveButton.toolTip = (
-            "Write marker-registration.json; the file auto-loads next time")
-        registration_file_row.addWidget(self.registrationSaveButton)
-        registration_form.addRow(registration_file_row)
+        self.markerStatusLabel = qt.QLabel("markers: not applied")
+        self.markerStatusLabel.wordWrap = True
+        marker_form.addRow(self.markerStatusLabel)
 
         self.registrationStatusLabel = qt.QLabel("registration: not fitted")
         self.registrationStatusLabel.wordWrap = True
-        registration_form.addRow(self.registrationStatusLabel)
-
+        marker_form.addRow(self.registrationStatusLabel)
 
         self.pickBox.toggled.connect(self.onPickToggled)
         self.clearButton.clicked.connect(self.onClear)
@@ -340,9 +298,6 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
         self.markerSaveButton.clicked.connect(self.onMarkerSave)
         self.registrationFitButton.clicked.connect(self.onRegistrationFit)
         self.registrationMapButton.clicked.connect(self.onRegistrationMap)
-        self.registrationSaveButton.clicked.connect(self.onRegistrationSave)
-        self.registrationAddButton.clicked.connect(self.onRegistrationAdd)
-        self.registrationRemoveButton.clicked.connect(self.onRegistrationRemove)
         self.registrationTable.itemChanged.connect(self.onRegistrationEdited)
         self.realFrameEdit.textChanged.connect(self.onRegistrationEdited)
 
@@ -358,8 +313,6 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
         # away edits the operator has not saved yet.
         if self.markerTable.rowCount == 0:
             self._load_marker_panel()
-        if self.registrationTable.rowCount == 0:
-            self._load_registration_panel()
         try:
             video = self.logic.video_status()
         except Exception:
@@ -483,42 +436,77 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
         else:
             self.statusLabel.text = f"Outside the field: {result['message']}"
 
-    def _fill_marker_table(self, plate):
-        """Show a validated plate in the panel fields."""
+    def _fill_marker_table(self, registration):
+        """Show a registration-like marker set in the merged table."""
         self.markerTable.setRowCount(0)
-        for marker in plate["markers"]:
+        for marker in registration["markers"]:
             row = self.markerTable.rowCount
             self.markerTable.insertRow(row)
             self.markerTable.setItem(
                 row, 0, qt.QTableWidgetItem(marker["label"]))
-            for column, value in ((1, marker["mm"][0]),
-                                  (2, marker["mm"][1]),
-                                  (3, marker["z"])):
+            for column, value in enumerate(
+                    (*marker["virtual_mm"], *marker["real_mm"]), start=1):
                 self.markerTable.setItem(
                     row, column, qt.QTableWidgetItem(f"{value:g}"))
-        self.markerWidthSpin.value = plate["width"]
-        self.markerHeightSpin.value = plate["height"]
-        (self.markerOriginXSpin.value, self.markerOriginYSpin.value,
-         self.markerOriginZSpin.value) = plate["origin"]
+        self.realFrameEdit.text = registration["real_frame"]
 
     def _load_marker_panel(self):
-        """Fill the table from marker-plate.json, quietly when it is absent."""
+        """Load the registration markers and the plate's check frame."""
+        from targeting import registration
         from targeting.marker_plate import load_plate
 
+        plate = None
         try:
             plate = load_plate()
+        except RuntimeError:
+            pass
+        if plate is not None:
+            self.markerWidthSpin.value = plate["width"]
+            self.markerHeightSpin.value = plate["height"]
+            (self.markerOriginXSpin.value, self.markerOriginYSpin.value,
+             self.markerOriginZSpin.value) = plate["origin"]
+
+        try:
+            config = registration.load_registration(registration.DEFAULT_PATH)
         except RuntimeError as exc:
-            self.markerStatusLabel.text = f"markers: {exc}"
-            return
-        self._fill_marker_table(plate)
+            if plate is None:
+                self.markerStatusLabel.text = f"markers: {exc}"
+                return
+            origin = plate["origin"]
+            markers = [{
+                "label": marker["label"],
+                "virtual_mm": [origin[0] + marker["mm"][0],
+                               origin[1] + marker["mm"][1],
+                               origin[2] + marker["z"]],
+                "real_mm": [0.0, 0.0, 0.0],
+            } for marker in plate["markers"]]
+            config = {"real_frame": "arm-base", "markers": markers,
+                      "fittable": False, "note": str(exc)}
+        self._fill_marker_table(config)
         self.markerStatusLabel.text = (
-            f"markers: {len(plate['markers'])} loaded from {plate['path']} "
-            f"(not applied)")
+            f"markers: {len(config['markers'])} loaded; V is the Slicer cube, "
+            f"R is the measured real frame")
+        if config.get("fittable"):
+            self.registrationStatusLabel.text = (
+                f"registration: {len(config['markers'])} markers loaded "
+                f"(not fitted)")
+        else:
+            note = config.get("note") or "fill the real R* columns"
+            self.registrationStatusLabel.text = f"registration: {note}"
+        self.realTargetLabel.text = "real target: none (markers loaded)"
 
     def _plate_from_panel(self):
-        """The panel as a validated plate, refusing by row and column."""
+        """The V columns as a plate for the camera check.
+
+        V is cube millimetres; the plate check wants plate millimetres, so
+        the cube origin is subtracted. The registration does not use this
+        method: it keeps the absolute V/R millimetres.
+        """
         from targeting.marker_plate import validate_plate
 
+        origin = (self.markerOriginXSpin.value,
+                  self.markerOriginYSpin.value,
+                  self.markerOriginZSpin.value)
         markers = []
         for row in range(self.markerTable.rowCount):
             label_item = self.markerTable.item(row, 0)
@@ -526,10 +514,10 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
             if not label:
                 raise RuntimeError(f"row {row + 1} has no label")
             values = []
-            for column, name in ((1, "x"), (2, "y"), (3, "z")):
+            for column, name in ((1, "Vx"), (2, "Vy"), (3, "Vz")):
                 item = self.markerTable.item(row, column)
                 text = item.text().strip() if item is not None else ""
-                if not text and name == "z":
+                if not text and name == "Vz":
                     text = "0"
                 if not text:
                     raise RuntimeError(f"{label} has no {name}")
@@ -538,14 +526,20 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
                 except ValueError:
                     raise RuntimeError(
                         f"{label}: {name} {text!r} is not a number") from None
-            markers.append({"label": label, "mm": values})
+            markers.append({
+                "label": label,
+                "mm": [values[0] - origin[0], values[1] - origin[1]],
+                "z": values[2] - origin[2],
+            })
+        if len(markers) < 4:
+            raise RuntimeError(
+                "the camera check needs at least four markers; the "
+                "virtual -> real fit still needs only three")
         data = {
             "plate_mm": {"width": self.markerWidthSpin.value,
                          "height": self.markerHeightSpin.value},
             "markers": markers,
-            "cube_origin_mm": [self.markerOriginXSpin.value,
-                               self.markerOriginYSpin.value,
-                               self.markerOriginZSpin.value],
+            "cube_origin_mm": list(origin),
         }
         return validate_plate(data, "the panel")
 
@@ -553,8 +547,9 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
         row = self.markerTable.rowCount
         self.markerTable.insertRow(row)
         self.markerTable.setItem(row, 0, qt.QTableWidgetItem(f"M{row + 1}"))
-        for column, value in ((1, "0"), (2, "0"), (3, "0")):
-            self.markerTable.setItem(row, column, qt.QTableWidgetItem(value))
+        for column in range(1, 7):
+            self.markerTable.setItem(row, column,
+                                     qt.QTableWidgetItem("0"))
 
     @staticmethod
     def _current_row(table):
@@ -591,15 +586,24 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
         self.markerStatusLabel.text = result["text"]
 
     def onMarkerSave(self, checked=False):
+        from targeting import registration
         from targeting.marker_plate import save_plate
 
         try:
-            plate = self._plate_from_panel()
-            path = save_plate(plate)
-        except RuntimeError as exc:
+            config = self._registration_from_panel()
+            path = registration.save_registration(
+                config, registration.DEFAULT_PATH)
+        except (RuntimeError, OSError) as exc:
             self.markerStatusLabel.text = f"markers: {exc}"
             return
-        self.markerStatusLabel.text = f"markers saved to {path}"
+        note = f"markers saved to {path}"
+        try:
+            plate = self._plate_from_panel()
+            plate_path = save_plate(plate)
+            note += f"; plate saved to {plate_path}"
+        except RuntimeError as exc:
+            note += f"; plate not saved: {exc}"
+        self.markerStatusLabel.text = note
 
     # -- the virtual -> real registration --------------------------------
 
@@ -657,41 +661,6 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
         return validate_registration(
             {"real_frame": self.realFrameEdit.text.strip(),
              "markers": markers}, "the panel")
-
-    def _load_registration_panel(self):
-        """Fill the table from marker-registration.json, quietly when absent."""
-        from targeting import registration
-
-        try:
-            config = registration.load_registration(registration.DEFAULT_PATH)
-        except RuntimeError as exc:
-            self.registrationStatusLabel.text = f"registration: {exc}"
-            return
-        self._fill_registration_table(config)
-        if config["fittable"]:
-            self.registrationStatusLabel.text = (
-                f"registration: {len(config['markers'])} markers loaded from "
-                f"{config['path']} (not fitted)")
-        else:
-            self.registrationStatusLabel.text = (
-                f"registration: {config['note']}; fill the measured mm")
-        self.realTargetLabel.text = "real target: none (registration loaded)"
-
-    def onRegistrationAdd(self, checked=False):
-        row = self.registrationTable.rowCount
-        self.registrationTable.insertRow(row)
-        self.registrationTable.setItem(
-            row, 0, qt.QTableWidgetItem(f"M{row + 1}"))
-        for column in range(1, 7):
-            self.registrationTable.setItem(row, column,
-                                           qt.QTableWidgetItem("0"))
-
-    def onRegistrationRemove(self, checked=False):
-        row = self._current_row(self.registrationTable)
-        if row < 0:
-            row = self.registrationTable.rowCount - 1
-        if row >= 0:
-            self.registrationTable.removeRow(row)
 
     def onRegistrationFit(self, checked=False):
         """Fit the rigid transform and write the solved map beside the logs."""
@@ -792,22 +761,6 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
         except OSError as exc:
             self.registrationStatusLabel.text += (
                 f"\nWARNING: could not write the last map: {exc}")
-
-    def onRegistrationSave(self, checked=False):
-        from targeting import registration
-
-        try:
-            config = self._registration_from_panel()
-            path = registration.save_registration(
-                config, registration.DEFAULT_PATH)
-        except (RuntimeError, OSError) as exc:
-            self.registrationStatusLabel.text = f"registration: {exc}"
-            return
-        self.registrationStatusLabel.text = (
-            f"registration saved to {path}"
-            + ("" if config["fittable"] else f" ({config['note']})"))
-
-    # -- the live camera stream ------------------------------------------
 
     def onCameraLayoutToggled(self, checked):
         if self._layout_busy:
