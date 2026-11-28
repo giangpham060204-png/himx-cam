@@ -118,8 +118,22 @@ def main():
             str(solved),
         )
 
+        from targeting.converter import cube_to_ras
+        import slicer_bridge.live_frame as bridge
+
+        frame = bridge.live_frame()
+        target_node = widget.logic.targets_node()
+        target_node.AddControlPoint(*cube_to_ras((30.0, 10.0, 0.0), frame))
+        widget.onTargetsReload()
+        table_real = [float(widget.targetsTable.item(0, column).text())
+                      for column in (4, 5, 6)]
+        expected = rotation @ np.array((30.0, 10.0, 0.0)) + translation
+        check(
+            "the target table shows the real coordinate after Fit",
+            np.allclose(np.asarray(table_real), expected, atol=0.01),
+            f"table={table_real}",
+        )
         widget.lastCube = (30.0, 10.0, 0.0)
-        expected = rotation @ np.array(widget.lastCube) + translation
         widget.onRegistrationMap()
         check(
             "the last target maps to the real frame",

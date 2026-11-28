@@ -106,6 +106,51 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
         pick_row.addWidget(self.clearButton)
         form.addRow(pick_row)
 
+        # -- the picked targets -----------------------------------------
+        # A read-only view of the Targets node. Drag the blue point in 3D,
+        # then Reload: V follows the point and R is the mapped real point.
+        self.targetsPanel = ctk.ctkCollapsibleButton()
+        self.targetsPanel.text = "Targets"
+        self.targetsPanel.collapsed = False
+        form.addRow(self.targetsPanel)
+        targets_form = qt.QFormLayout(self.targetsPanel)
+
+        self.targetsHint = qt.QLabel(
+            "Each target has a name (T1, T2, ...). Drag the blue point in the "
+            "3D view, then Reload: V is the current cube position, R is the "
+            "mapped real position once the markers are fitted.")
+        self.targetsHint.wordWrap = True
+        targets_form.addRow(self.targetsHint)
+
+        self.targetsTable = qt.QTableWidget(0, 7)
+        self.targetsTable.setHorizontalHeaderLabels(
+            ["name", "Vx", "Vy", "Vz", "Rx", "Ry", "Rz"])
+        try:
+            self.targetsTable.horizontalHeader().setSectionResizeMode(
+                0, qt.QHeaderView.Stretch)
+        except Exception:  # noqa: BLE001 - older Qt spelling
+            self.targetsTable.horizontalHeader().setStretchLastSection(True)
+        for column in range(1, 7):
+            self.targetsTable.setColumnWidth(column, 52)
+        self.targetsTable.verticalHeader().setVisible(False)
+        self.targetsTable.setMinimumHeight(100)
+        self.targetsTable.setMaximumHeight(150)
+        try:
+            self.targetsTable.setEditTriggers(qt.QAbstractItemView.NoEditTriggers)
+        except Exception:  # noqa: BLE001 - older Qt spelling
+            self.targetsTable.setEditTriggers(0)
+        self.targetsTable.toolTip = (
+            "Read-only: V is the live cube position after Reload; R is the "
+            "real coordinate through the fitted markers.")
+        targets_form.addRow(self.targetsTable)
+
+        targets_buttons = qt.QHBoxLayout()
+        self.targetsReloadButton = qt.QPushButton("Reload from scene")
+        self.targetsReloadButton.toolTip = (
+            "Re-read the blue target points; use after dragging a point")
+        targets_buttons.addWidget(self.targetsReloadButton)
+        targets_form.addRow(targets_buttons)
+
         real = qt.QHBoxLayout()
         self.realCameraButton = qt.QPushButton("Connect real cameras")
         self.realCameraButton.toolTip = (
@@ -289,6 +334,7 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
 
         self.pickBox.toggled.connect(self.onPickToggled)
         self.clearButton.clicked.connect(self.onClear)
+        self.targetsReloadButton.clicked.connect(self.onTargetsReload)
         self.realCameraButton.clicked.connect(self.onConnectRealCameras)
         self.realCameraStopButton.clicked.connect(self.onStopRealCameras)
         self.cameraLayoutButton.toggled.connect(self.onCameraLayoutToggled)
@@ -319,6 +365,8 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
             video = {"status": "off", "message": "cameras: off"}
         self.videoLabel.text = video["message"]
         self.realCameraStopButton.setEnabled(video["status"] == "running")
+        self.logic.remove_virtual_tip()
+        self._refresh_target_table()
 
     def exit(self):
         self._stop_video_quietly()
@@ -425,6 +473,7 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
             self.lastReal = None
             self.realTargetLabel.text = (
                 "real target: none — press Map for this target")
+            self._refresh_target_table()
             if result["log_error"]:
                 self.statusLabel.text = (
                     f"Placed, but the log write failed: {result['log_error']}"
@@ -615,6 +664,7 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
                 "registration: edited; fit the markers again")
             self.realTargetLabel.text = (
                 "real target: none (registration edited)")
+            self._refresh_target_table()
 
     def _fill_registration_table(self, registration):
         """Show a loaded registration in the panel fields."""
@@ -693,6 +743,7 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
         self.registrationFit = fit
         self.realTargetLabel.text = (
             "real target: none — place a target and press Map")
+        self._refresh_target_table()
         text = "registration: " + registration.fit_note(fit)
         try:
             import json
@@ -743,6 +794,7 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
             f"real {frame}: ({real[0]:.2f}, {real[1]:.2f}, {real[2]:.2f}) mm\n"
             f"virtual cube: ({cube[0]:.2f}, {cube[1]:.2f}, {cube[2]:.2f}) mm"
         )
+        self._refresh_target_table()
         try:
             import json
 
@@ -838,12 +890,36 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
             pass
         self._show_camera_layout(False)
 
+    def _refresh_target_table(self):
+        """Re-read the Targets node; V updates after a drag, R after Fit."""
+        from targeting.registration import apply_transform
+
+        points = self.logic.target_points()
+        self.targetsTable.setRowCount(0)
+        for label, cube in points:
+            row = self.targetsTable.rowCount
+            self.targetsTable.insertRow(row)
+            self.targetsTable.setItem(row, 0, qt.QTableWidgetItem(label))
+            values = [f"{value:.2f}" for value in cube]
+            if self.registrationFit is not None:
+                real = apply_transform(self.registrationFit, cube)
+                values.extend(f"{value:.2f}" for value in real)
+            else:
+                values.extend(["—", "—", "—"])
+            for column, value in enumerate(values, start=1):
+                self.targetsTable.setItem(
+                    row, column, qt.QTableWidgetItem(value))
+
+    def onTargetsReload(self, checked=False):
+        self._refresh_target_table()
+
     def onClear(self, checked=False):
         self.logic.clear_targets()
         self.lastCube = None
         self.lastReal = None
         self.realTargetLabel.text = (
             "real target: none — fit the markers, place a target, then Map")
+        self._refresh_target_table()
 
     def refresh_status(self):
         self.statusLabel.text = (

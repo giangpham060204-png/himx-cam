@@ -48,7 +48,9 @@ def main():
         import slicer
 
         import Targeting as targeting_module
+        import slicer_bridge.live_frame as bridge
         from TargetingLib.logic import _LEFT_BUTTON, _MOUSE_PRESS
+        from targeting.converter import cube_to_ras
 
         no_modifier = getattr(qt.Qt, "NoModifier", None)
         if no_modifier is None:
@@ -157,6 +159,33 @@ def main():
         check("the real-target readout asks for Map",
               "press Map" in widget.realTargetLabel.text,
               widget.realTargetLabel.text)
+
+        check("the target has a name and a table row",
+              widget.targetsTable.rowCount == 1
+              and widget.targetsTable.item(0, 0).text() == "T1",
+              f"rows={widget.targetsTable.rowCount}")
+        target_cube = widget.logic.target_points()[0][1]
+        table_cube = [float(widget.targetsTable.item(0, column).text())
+                      for column in (1, 2, 3)]
+        check("the target table shows the live V coordinates",
+              all(abs(a - b) < 0.01
+                  for a, b in zip(target_cube, table_cube)),
+              f"cube={target_cube} table={table_cube}")
+        check("the target table has no R before Fit",
+              widget.targetsTable.item(0, 4).text() == "—")
+        check("no cyan VirtualTip is created",
+              slicer.mrmlScene.GetFirstNodeByName("VirtualTip") is None)
+
+        # Dragging the blue point and pressing Reload updates the table.
+        targets.SetNthControlPointPosition(
+            0, *cube_to_ras((40.0, 15.0, 5.0), bridge.live_frame()))
+        widget.onTargetsReload()
+        moved = [float(widget.targetsTable.item(0, column).text())
+                 for column in (1, 2, 3)]
+        check("Reload follows a dragged target",
+              all(abs(a - b) < 0.01
+                  for a, b in zip((40.0, 15.0, 5.0), moved)),
+              f"table={moved}")
 
         widget.onClear()
         check("Clear targets removes the point",

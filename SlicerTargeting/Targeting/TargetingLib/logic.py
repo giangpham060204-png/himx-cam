@@ -589,22 +589,34 @@ class TargetingLogic(ScriptedLoadableModuleLogic):
                     pass
         return node
 
-    def last_target_cube(self):
-        """The last target's *current* cube position, or None.
+    def target_points(self):
+        """The target labels and current cube positions, in list order.
 
-        Read from the markups node, not from the click-time cache: a target
-        dragged in the 3D view must map from where it is now, not from where
-        it was first placed.
+        Read from the markups node, not from a click-time cache: a target
+        dragged in the 3D view must be read from where it is now.
         """
         node = slicer.mrmlScene.GetFirstNodeByName(TARGETS_NODE_NAME)
         if node is None or not node.IsA("vtkMRMLMarkupsFiducialNode"):
-            return None
-        count = node.GetNumberOfControlPoints()
-        if count == 0:
-            return None
-        ras = node.GetNthControlPointPosition(count - 1)
+            return []
         frame = bridge.live_frame()
-        return tuple(float(value) for value in ras_to_cube(ras, frame))
+        points = []
+        for index in range(node.GetNumberOfControlPoints()):
+            ras = node.GetNthControlPointPosition(index)
+            cube = ras_to_cube(ras, frame)
+            points.append((node.GetNthControlPointLabel(index),
+                           tuple(float(value) for value in cube)))
+        return points
+
+    def last_target_cube(self):
+        """The last target's *current* cube position, or None."""
+        points = self.target_points()
+        return points[-1][1] if points else None
+
+    def remove_virtual_tip(self):
+        """Remove the old cyan VirtualTip left by the camera-click flow."""
+        tip = slicer.mrmlScene.GetFirstNodeByName(TIP_NODE_NAME)
+        if tip is not None:
+            slicer.mrmlScene.RemoveNode(tip)
 
     def move_tip(self, ras):
         import vtk  # noqa: PLC0415
@@ -655,7 +667,6 @@ class TargetingLogic(ScriptedLoadableModuleLogic):
         index = node.AddControlPoint(ras[0], ras[1], ras[2])
         try:
             node.SetNthControlPointLabel(index, f"T{self.placed + 1}")
-            self.move_tip(ras)
         except Exception:
             # Keep scene and counters consistent: a half-placed target must
             # not survive as an orphan the operator cannot explain.
