@@ -179,8 +179,12 @@ def main():
               all(abs(a - b) < 0.01
                   for a, b in zip(target_cube, table_cube)),
               f"cube={target_cube} table={table_cube}")
-        check("the target table has no R before Fit",
-              widget.targetsTable.item(0, 4).text() == "—")
+        table_real = [float(widget.targetsTable.item(0, column).text())
+                      for column in (4, 5, 6)]
+        check("the target table shows R from the default auto-fit",
+              all(abs(a - b) < 0.01
+                  for a, b in zip(target_cube, table_real)),
+              f"real={table_real}")
         check("no cyan VirtualTip is created",
               slicer.mrmlScene.GetFirstNodeByName("VirtualTip") is None)
 

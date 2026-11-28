@@ -1,6 +1,6 @@
 {
-  "note": "PLACEHOLDER. virtual_mm is where each marker sits in the Slicer cube; real_mm is the same marker measured in the named real frame (arm base, plate or bench), in millimetres. Both are needed; the transform is rigid. The real zeros below are refused as coincident markers until every row is measured. Do not guess; record the as-built values.",
-  "real_frame": "arm-base",
+  "note": "DEFAULT LOCAL FRAME. Three markers: two balls on the baseline, one raised so the triangle is not flat. V is the Slicer cube; R defaults to the same device-local frame so the fit is ready at startup. With only three points the mirror ambiguity remains: keep the device face up, or add a fourth non-coplanar marker. If the real frame is the arm base, bench or plate, replace every R with the measured position; the rigid fit then maps V to that frame. The 20 mm z is a default, not a measurement.",
+  "real_frame": "device-local",
   "markers": [
     {
       "label": "B1",
@@ -23,7 +23,7 @@
         0.0
       ],
       "real_mm": [
-        0.0,
+        60.0,
         0.0,
         0.0
       ]
@@ -33,12 +33,12 @@
       "virtual_mm": [
         30.0,
         20.0,
-        0.0
+        20.0
       ],
       "real_mm": [
-        0.0,
-        0.0,
-        0.0
+        30.0,
+        20.0,
+        20.0
       ]
     }
   ]

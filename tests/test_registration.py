@@ -65,14 +65,17 @@ def moved(markers, rotation, translation):
 # -- the config ---------------------------------------------------------
 
 
-def test_the_shipped_template_loads_but_is_not_fittable():
-    # The template must be loadable so the panel can show its rows; its real
-    # zeros are coincident markers, so the fit refuses until they are measured.
+def test_the_shipped_template_is_a_fittable_default():
+    # The default local frame has three markers, one raised, and R = V, so
+    # the panel can fit at startup. It is not a measured arm frame.
     loaded = r.load_registration(ROOT / "marker-registration.json")
-    assert loaded["fittable"] is False
-    assert "real markers are collinear" in loaded["note"]
-    with pytest.raises(ValueError, match="real markers are collinear"):
-        r.fit_registration(loaded)
+    assert loaded["fittable"] is True
+    assert len(loaded["markers"]) == 3
+    fit = r.fit_registration(loaded)
+    assert fit["rms"] == pytest.approx(0.0, abs=1e-9)
+    # Three points always lie on a plane; the raised T1 makes the triangle
+    # non-horizontal but cannot remove the mirror ambiguity by itself.
+    assert fit["coplanar"] is True
 
 
 def test_three_non_collinear_markers_are_accepted():
