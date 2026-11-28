@@ -269,8 +269,10 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
             "V* = marker position in the Slicer cube (mm). R* = the same "
             "marker measured in the real frame (mm). These are the "
             "registration inputs, not the picked target; the mapped target "
-            "appears at the top of the panel after Map. Double-click a cell "
-            "to edit it.")
+            "appears at the top of the panel after Map. B1/B2/T1 are just "
+            "labels: here they mean the two balls and the triangle; rename "
+            "them to match the physical markers. Double-click a cell to edit "
+            "it.")
         self.registrationHint.wordWrap = True
         registration_form.addRow(self.registrationHint)
 
@@ -554,8 +556,19 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
         for column, value in ((1, "0"), (2, "0"), (3, "0")):
             self.markerTable.setItem(row, column, qt.QTableWidgetItem(value))
 
+    @staticmethod
+    def _current_row(table):
+        """The selected row, whether Qt exposes currentRow as int or slot."""
+        value = table.currentRow
+        if callable(value):
+            value = value()
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return -1
+
     def onMarkerRemove(self, checked=False):
-        row = self.markerTable.currentRow
+        row = self._current_row(self.markerTable)
         if row < 0:
             row = self.markerTable.rowCount - 1
         if row >= 0:
@@ -674,7 +687,7 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
                                            qt.QTableWidgetItem("0"))
 
     def onRegistrationRemove(self, checked=False):
-        row = self.registrationTable.currentRow
+        row = self._current_row(self.registrationTable)
         if row < 0:
             row = self.registrationTable.rowCount - 1
         if row >= 0:

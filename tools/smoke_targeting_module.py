@@ -120,6 +120,20 @@ def main():
               hasattr(widget, "realTargetLabel")
               and widget.realTargetLabel.text.startswith("real target:"))
 
+        before = widget.registrationTable.rowCount
+        widget.registrationTable.setCurrentCell(before - 1, 0)
+        widget.onRegistrationRemove()
+        check("registration Remove deletes the selected row",
+              widget.registrationTable.rowCount == before - 1,
+              f"rows={widget.registrationTable.rowCount}")
+
+        before = widget.markerTable.rowCount
+        widget.markerTable.setCurrentCell(before - 1, 0)
+        widget.onMarkerRemove()
+        check("plate Remove deletes the selected row",
+              widget.markerTable.rowCount == before - 1,
+              f"rows={widget.markerTable.rowCount}")
+
         # Place one target with a real click through the Red-view filter.
         red_widget = slicer.app.layoutManager().sliceWidget("Red")
         red_view = red_widget.sliceView()
