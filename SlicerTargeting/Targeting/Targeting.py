@@ -151,6 +151,11 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
         targets_buttons.addWidget(self.targetsReloadButton)
         targets_form.addRow(targets_buttons)
 
+        self.targetsFitLabel = qt.QLabel(
+            "R: not fitted — fill the marker R columns and press Fit")
+        self.targetsFitLabel.wordWrap = True
+        targets_form.addRow(self.targetsFitLabel)
+
         real = qt.QHBoxLayout()
         self.realCameraButton = qt.QPushButton("Connect real cameras")
         self.realCameraButton.toolTip = (
@@ -536,10 +541,17 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
             f"markers: {len(config['markers'])} loaded; V is the Slicer cube, "
             f"R is the measured real frame")
         if config.get("fittable"):
-            self.registrationStatusLabel.text = (
-                f"registration: {len(config['markers'])} markers loaded "
-                f"(not fitted)")
+            try:
+                fit = registration.fit_registration(config)
+                self.registrationFit = fit
+                self.registrationStatusLabel.text = (
+                    "registration: loaded and fitted\n"
+                    + registration.fit_note(fit))
+            except (RuntimeError, ValueError) as exc:
+                self.registrationFit = None
+                self.registrationStatusLabel.text = f"registration: {exc}"
         else:
+            self.registrationFit = None
             note = config.get("note") or "fill the real R* columns"
             self.registrationStatusLabel.text = f"registration: {note}"
         self.realTargetLabel.text = "real target: none (markers loaded)"
@@ -757,15 +769,18 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
         try:
             config = self._registration_from_panel()
         except RuntimeError as exc:
+            self.registrationFit = None
             self.registrationStatusLabel.text = f"registration: {exc}"
             self.realTargetLabel.text = (
                 "real target: none (registration invalid)")
+            self._refresh_target_table()
             return
         if not config["fittable"]:
             self.registrationFit = None
             self.registrationStatusLabel.text = f"registration: {config['note']}"
             self.realTargetLabel.text = (
                 "real target: none (registration not fittable)")
+            self._refresh_target_table()
             return
         try:
             fit = registration.fit_registration(config)
@@ -774,6 +789,7 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
             self.registrationStatusLabel.text = f"registration: {exc}"
             self.realTargetLabel.text = (
                 "real target: none (registration failed)")
+            self._refresh_target_table()
             return
 
         self.registrationFit = fit
@@ -930,6 +946,13 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
         """Re-read the Targets node; V updates after a drag, R after Fit."""
         from targeting.registration import apply_transform
 
+        if self.registrationFit is not None:
+            self.targetsFitLabel.text = (
+                f"R: fitted — residual {self.registrationFit['rms']:.2f} mm "
+                f"RMS; R columns are the mapped target")
+        else:
+            self.targetsFitLabel.text = (
+                "R: not fitted — fill the marker R columns and press Fit")
         points = self.logic.target_points()
         self.targetsTable.setRowCount(0)
         for label, cube in points:
