@@ -560,8 +560,16 @@ class TargetingLogic(ScriptedLoadableModuleLogic):
                 "vtkMRMLMarkupsFiducialNode", TARGETS_NODE_NAME
             )
         display = self._display(node, (0.2, 0.4, 1.0))
-        display.SetPointLabelsVisibility(True)  # current setter (not ...Visible)
-        display.SetGlyphScale(4.0)
+        # Targets are plain points, not labelled fiducials: blue spheres with
+        # no label, distinct from the orange, labelled, locked plate.
+        display.SetPointLabelsVisibility(False)
+        display.SetGlyphScale(5.0)
+        glyph = getattr(display, "SetGlyphTypeFromString", None)
+        if callable(glyph):
+            try:
+                glyph("Sphere3D")
+            except Exception:  # noqa: BLE001 - older Slicer spelling
+                pass
         # Targets are the editable points: native Slicer markups, unlocked and
         # selectable, so a left-drag on the point in the 3D view moves it. The
         # plate markers are locked and orange instead. (HandlesInteractive is

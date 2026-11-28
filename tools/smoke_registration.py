@@ -85,10 +85,10 @@ def main():
         widget.enter()
 
         check(
-            "the registration panel is in the main panel, not Advanced",
+            "the registration table is in the main panel",
             hasattr(widget, "registrationTable")
             and widget.registrationTable.columnCount == 7
-            and not widget.advancedPanel.isAncestorOf(widget.registrationTable),
+            and not hasattr(widget, "advancedPanel"),
             f"columns={getattr(widget.registrationTable, 'columnCount', None)}",
         )
         check(
@@ -181,7 +181,7 @@ def main():
         )
         saved["real_frame"] = "bench"
         registration.DEFAULT_PATH.write_text(json.dumps(saved), encoding="utf-8")
-        widget.onRegistrationLoad()
+        widget._load_registration_panel()
         check(
             "load reads the real frame and rows",
             widget.realFrameEdit.text == "bench"

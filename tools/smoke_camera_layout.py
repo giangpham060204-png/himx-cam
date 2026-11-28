@@ -97,8 +97,6 @@ def main():
     slicer.app.processEvents()
 
     # -- the layout -------------------------------------------------------
-    # Tick camera mode first: a layout switch must not silently untick it.
-    widget.cameraBox.checked = True
     widget._show_camera_layout(True)
     layout = slicer.app.layoutManager()
     check("the camera layout becomes the arrangement on screen",
@@ -154,15 +152,7 @@ def main():
           .GetBackgroundVolumeID() == volumes["c1"].GetID(),
           f"background={widgets['Cam1'].sliceLogic().GetSliceCompositeNode().GetBackgroundVolumeID()}")
 
-    # -- clicks -----------------------------------------------------------
-    check("camera mode survives the layout switch",
-          widget.cameraBox.checked,
-          f"checked={widget.cameraBox.checked}")
-    check("the camera panes carry click filters",
-          set(widget.cameraFilters) == set(layouts.CAMERA_VIEWS)
-          and all(f.click_enabled
-                  for _t, f in widget.cameraFilters.values()),
-          f"filters={sorted(widget.cameraFilters)}")
+    # -- clicks (logic only; the camera-click UI is gone) -----------------
 
     view = widgets["Cam1"].sliceView()
     width, height = int(view.width), int(view.height)
@@ -176,24 +166,6 @@ def main():
     check("the vertical axis is not flipped",
           upper["pixel"][1] < centre["pixel"][1] - 15,
           f"upper v={upper['pixel'][1]:.1f} centre v={centre['pixel'][1]:.1f}")
-
-    # Ctrl+wheel / Ctrl+drag inside a camera pane: the filter carries the pane
-    # name, which used to be looked up in the XY/XZ/YZ map and failed.
-    camera_filter = widget.cameraFilters["Cam1"][1]
-    before_fov = widgets["Cam1"].mrmlSliceNode().GetFieldOfView()[0]
-    camera_filter._zoom_view(120)
-    after_fov = widgets["Cam1"].mrmlSliceNode().GetFieldOfView()[0]
-    check("Ctrl+wheel zooms a camera pane",
-          abs(after_fov - before_fov) > 1.0,
-          f"fov {before_fov:.1f} -> {after_fov:.1f}")
-    before_pan = [widgets["Cam1"].mrmlSliceNode().GetSliceToRAS()
-                  .GetElement(axis, 3) for axis in range(3)]
-    camera_filter._pan_view(20, 0)
-    after_pan = [widgets["Cam1"].mrmlSliceNode().GetSliceToRAS()
-                 .GetElement(axis, 3) for axis in range(3)]
-    check("Ctrl+drag pans a camera pane",
-          any(abs(a - b) > 1e-6 for a, b in zip(before_pan, after_pan)),
-          f"{before_pan} -> {after_pan}")
 
     # -- Slicer points still work in XY/XZ/YZ ------------------------------
     widget.pickBox.checked = True
@@ -266,7 +238,6 @@ def main():
     slicer.util.mainWindow().grab().save("/tmp/opencode/camera-layout.png")
 
     # -- back to the standard arrangement ---------------------------------
-    widget.cameraBox.checked = False
     widget._show_camera_layout(False)
     check("switching back restores the four-up layout",
           not widget.logic.camera_layout_active(),

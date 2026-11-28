@@ -24,8 +24,6 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from TargetingLib.logic import (  # noqa: E402
-    CAMERA_CLICK_LABELS,
-    CAMERA_VIEWS,
     LOGS_DIR,
     STREAM_PORT,
     VIEW_WIDGETS,
@@ -43,9 +41,9 @@ class Targeting(ScriptedLoadableModule):
         parent.dependencies = []
         parent.contributors = ["himx-cam project"]
         parent.helpText = (
-            "Click a point inside the operating field in the Red, Green or "
-            "Yellow slice view; the click becomes a 3D target. Depth comes "
-            "from the slice slider of the view you click in."
+            "Tick Pick targets, click a point in Red/Green/Yellow; the slice "
+            "slider gives the third coordinate. The Virtual -> real section "
+            "maps it through measured markers to the real frame."
         )
         parent.acknowledgementText = ""
 
@@ -55,12 +53,10 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
         super().__init__(parent)
         self.logic = TargetingLogic()
         self.filters = {}
-        self.cameraFilters = {}
         self.lastClick = None
         self.lastCube = None
         self.lastReal = None
         self.registrationFit = None
-        self.streamTimer = None
         self.threeDFilter = None
         self._video_demo_mode = False
         self._layout_busy = False
@@ -98,13 +94,17 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
             "Pick targets (click Red/Green/Yellow)")
         self.pickBox.toolTip = (
             "When ticked, a click in Red, Green or Yellow places a target at "
-            "the clicked pixel and the slice slider's depth. A target can be "
-            "dragged in the 3D view; the orange plate markers are locked and "
-            "cannot be moved.")
-        form.addRow(self.pickBox)
-
-        # The camera-click (triangulation) controls moved to Advanced: the
-        # marker plate is the workflow in use.
+            "the clicked pixel and the slice slider's depth. Targets are the "
+            "blue spheres (not fiducial markers) and can be dragged in the 3D "
+            "view; the orange plate markers are locked.")
+        pick_row = qt.QHBoxLayout()
+        pick_row.addWidget(self.pickBox)
+        self.clearButton = qt.QPushButton("Clear targets")
+        self.clearButton.toolTip = (
+            "Remove all blue target points; the plate and registration "
+            "markers stay")
+        pick_row.addWidget(self.clearButton)
+        form.addRow(pick_row)
 
         real = qt.QHBoxLayout()
         self.realCameraButton = qt.QPushButton("Connect real cameras")
@@ -141,7 +141,7 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
 
         self.videoSettings = ctk.ctkCollapsibleButton()
         self.videoSettings.text = "Camera settings"
-        self.videoSettings.collapsed = False
+        self.videoSettings.collapsed = True
         form.addRow(self.videoSettings)
         video_form = qt.QFormLayout(self.videoSettings)
 
@@ -161,32 +161,11 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
         self.videoNote.wordWrap = True
         video_form.addRow(self.videoNote)
 
-        stream_control = qt.QHBoxLayout()
-        self.pauseStreamButton = qt.QPushButton("Pause stream")
-        self.stepStreamButton = qt.QPushButton("Step frame")
-        self.resumeStreamButton = qt.QPushButton("Resume stream")
-        stream_control.addWidget(self.pauseStreamButton)
-        stream_control.addWidget(self.stepStreamButton)
-        stream_control.addWidget(self.resumeStreamButton)
-        form.addRow(stream_control)
-
-        self.streamLabel = qt.QLabel("camera stream: off")
-        self.streamLabel.wordWrap = True
-        form.addRow(self.streamLabel)
-
-        log_row = qt.QHBoxLayout()
-        self.openLogButton = qt.QPushButton("Open log folder")
-        log_row.addWidget(self.openLogButton)
-        form.addRow(log_row)
-
-        # -- the marker plate -------------------------------------------
-        # Everything the markers need, so the JSON never has to be edited by
-        # hand: size, placement, one row per marker, apply/save/load.
+        # -- the fiducial plate -----------------------------------------
+        # The plate is the reference marker set for the camera check and the
+        # declared frame. Everything is editable here; the JSON is the file.
         self.markerPanel = ctk.ctkCollapsibleButton()
-        self.markerPanel.text = "Marker plate (camera check)"
-        # The virtual -> real registration is the client's workflow now; the
-        # plate panel stays available but collapsed so its table cannot push
-        # the registration and the mapped-target readout off the panel.
+        self.markerPanel.text = "Fiducial plate"
         self.markerPanel.collapsed = True
         form.addRow(self.markerPanel)
         marker_form = qt.QFormLayout(self.markerPanel)
@@ -261,11 +240,9 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
 
         marker_file_row = qt.QHBoxLayout()
         self.markerSaveButton = qt.QPushButton("Save")
-        self.markerLoadButton = qt.QPushButton("Load")
-        self.markerSaveButton.toolTip = "Write marker-plate.json"
-        self.markerLoadButton.toolTip = "Read marker-plate.json into the table"
+        self.markerSaveButton.toolTip = (
+            "Write marker-plate.json; the file auto-loads next time")
         marker_file_row.addWidget(self.markerSaveButton)
-        marker_file_row.addWidget(self.markerLoadButton)
         marker_form.addRow(marker_file_row)
 
         self.markerStatusLabel = qt.QLabel("markers: not applied")
@@ -318,18 +295,13 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
         registration_form.addRow(self.registrationTable)
 
         registration_buttons = qt.QHBoxLayout()
-        self.registrationSyncButton = qt.QPushButton("Sync virtual from plate")
         self.registrationFitButton = qt.QPushButton("Fit")
         self.registrationMapButton = qt.QPushButton("Map last target")
-        self.registrationSyncButton.toolTip = (
-            "Copy each plate marker's cube coordinates into the v* columns, "
-            "matching by label; the r* measurements are kept")
         self.registrationFitButton.toolTip = (
             "Fit the rigid virtual-to-real transform and show the residual")
         self.registrationMapButton.toolTip = (
             "Map the last placed target from the virtual cube to the real "
             "frame")
-        registration_buttons.addWidget(self.registrationSyncButton)
         registration_buttons.addWidget(self.registrationFitButton)
         registration_buttons.addWidget(self.registrationMapButton)
         registration_form.addRow(registration_buttons)
@@ -345,173 +317,28 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
 
         registration_file_row = qt.QHBoxLayout()
         self.registrationSaveButton = qt.QPushButton("Save")
-        self.registrationLoadButton = qt.QPushButton("Load")
-        self.registrationSaveButton.toolTip = "Write marker-registration.json"
-        self.registrationLoadButton.toolTip = (
-            "Read marker-registration.json into the table")
+        self.registrationSaveButton.toolTip = (
+            "Write marker-registration.json; the file auto-loads next time")
         registration_file_row.addWidget(self.registrationSaveButton)
-        registration_file_row.addWidget(self.registrationLoadButton)
         registration_form.addRow(registration_file_row)
 
         self.registrationStatusLabel = qt.QLabel("registration: not fitted")
         self.registrationStatusLabel.wordWrap = True
         registration_form.addRow(self.registrationStatusLabel)
 
-        self.advancedPanel = ctk.ctkCollapsibleButton()
-        self.advancedPanel.text = "Advanced"
-        self.advancedPanel.collapsed = True
-        form.addRow(self.advancedPanel)
-        advanced = qt.QFormLayout(self.advancedPanel)
-
-        # The old triangulation controls, kept out of the way.
-        self.cameraBox = qt.QCheckBox("Camera view clicks: one per view")
-        self.cameraBox.toolTip = (
-            "The video keeps playing while you click. A click moves that "
-            "camera's mark to the pressed pixel immediately. Ctrl+drag pans "
-            "a camera view or rotates the 3D view without placing a mark. "
-            "Use a fixed target; Pause stream if the target, a camera, or an "
-            "occluder can move.")
-        advanced.addRow(self.cameraBox)
-
-        self.cameraLabel = qt.QLabel("no camera views loaded")
-        self.cameraLabel.wordWrap = True
-        advanced.addRow(self.cameraLabel)
-
-        camera = qt.QHBoxLayout()
-        self.clearCameraButton = qt.QPushButton("Clear camera clicks")
-        self.clearCameraButton.toolTip = (
-            "Clear the three clicks, the solved point, rays and predicted pixels")
-        camera.addWidget(self.clearCameraButton)
-        advanced.addRow(camera)
-
-        self.rayGuideLabel = qt.QLabel("ray guide: click a camera view")
-        self.rayGuideLabel.wordWrap = True
-        advanced.addRow(self.rayGuideLabel)
-
-        stream = qt.QHBoxLayout()
-        self.connectStreamButton = qt.QPushButton("Connect camera stream")
-        self.disconnectStreamButton = qt.QPushButton("Disconnect stream")
-        stream.addWidget(self.connectStreamButton)
-        stream.addWidget(self.disconnectStreamButton)
-        advanced.addRow(stream)
-
-        self.truthLabel = qt.QLabel("camera result: no measurement yet")
-        self.truthLabel.wordWrap = True
-        advanced.addRow(self.truthLabel)
-
-        self.cameraPixelNote = qt.QLabel("")
-        self.cameraPixelNote.wordWrap = True
-        advanced.addRow(self.cameraPixelNote)
-
-        # Pick targets lives in the main panel now; the probe and camera
-        # modes remain here as the legacy/advanced paths.
-        self.probeBox = qt.QCheckBox(
-            "Probe mode (click a slice to move the camera-check point)"
-        )
-        advanced.addRow(self.probeBox)
-
-        self.probeLabel = qt.QLabel("no probe yet")
-        self.probeLabel.wordWrap = True
-        advanced.addRow(self.probeLabel)
-
-        self.lastLabel = qt.QLabel("no target yet")
-        advanced.addRow(self.lastLabel)
-
-        self.countsLabel = qt.QLabel("Placed: 0     Rejected: 0")
-        advanced.addRow(self.countsLabel)
-
-        targets = qt.QHBoxLayout()
-        self.clearButton = qt.QPushButton("Clear targets")
-        targets.addWidget(self.clearButton)
-        advanced.addRow(targets)
-
-        external = qt.QHBoxLayout()
-        self.loadExternalButton = qt.QPushButton("Load external targets")
-        external.addWidget(self.loadExternalButton)
-        advanced.addRow(external)
-
-        self.externalLabel = qt.QLabel("no camera targets loaded")
-        self.externalLabel.wordWrap = True
-        advanced.addRow(self.externalLabel)
-
-        offline = qt.QHBoxLayout()
-        self.loadCameraViewsButton = qt.QPushButton("Load camera views")
-        offline.addWidget(self.loadCameraViewsButton)
-        advanced.addRow(offline)
-
-        self.cameraPixelEdits = {}
-        for tag, widget_name in zip(CAMERA_CLICK_LABELS, CAMERA_VIEWS):
-            row = qt.QHBoxLayout()
-            row.addWidget(qt.QLabel(tag))
-            u_edit = qt.QLineEdit()
-            u_edit.setPlaceholderText("\u2014")
-            u_edit.setMaximumWidth(90)
-            v_edit = qt.QLineEdit()
-            v_edit.setPlaceholderText("\u2014")
-            v_edit.setMaximumWidth(90)
-            row.addWidget(u_edit)
-            row.addWidget(v_edit)
-            advanced.addRow(f"{tag} pixel (u, v)", row)
-            self.cameraPixelEdits[widget_name] = (u_edit, v_edit)
-            u_edit.editingFinished.connect(
-                lambda _w=widget_name: self.on_camera_pixel_edited(_w))
-            v_edit.editingFinished.connect(
-                lambda _w=widget_name: self.on_camera_pixel_edited(_w))
-
-        spawn_row = qt.QHBoxLayout()
-        self.spawnXEdit = qt.QLineEdit("0.0")
-        self.spawnXEdit.setMaximumWidth(90)
-        self.spawnYEdit = qt.QLineEdit("0.0")
-        self.spawnYEdit.setMaximumWidth(90)
-        self.spawnZEdit = qt.QLineEdit("0.0")
-        self.spawnZEdit.setMaximumWidth(90)
-        self.spawnButton = qt.QPushButton("Spawn")
-        spawn_row.addWidget(qt.QLabel("x"))
-        spawn_row.addWidget(self.spawnXEdit)
-        spawn_row.addWidget(qt.QLabel("y"))
-        spawn_row.addWidget(self.spawnYEdit)
-        spawn_row.addWidget(qt.QLabel("z"))
-        spawn_row.addWidget(self.spawnZEdit)
-        spawn_row.addWidget(self.spawnButton)
-        advanced.addRow("Spawn 3D point (rig mm)", spawn_row)
-
-        self.spawnNote = qt.QLabel("")
-        self.spawnNote.wordWrap = True
-        advanced.addRow(self.spawnNote)
 
         self.pickBox.toggled.connect(self.onPickToggled)
-        self.probeBox.toggled.connect(self.onProbeToggled)
-        self.cameraBox.toggled.connect(self.onCameraToggled)
         self.clearButton.clicked.connect(self.onClear)
-        self.openLogButton.clicked.connect(self.onOpenLog)
-        self.loadExternalButton.clicked.connect(self.onLoadExternal)
-        self.loadCameraViewsButton.clicked.connect(
-            lambda _checked=False: self.onLoadCameraViews())
-        self.clearCameraButton.clicked.connect(self.onClearCameraClicks)
         self.realCameraButton.clicked.connect(self.onConnectRealCameras)
         self.realCameraStopButton.clicked.connect(self.onStopRealCameras)
         self.cameraLayoutButton.toggled.connect(self.onCameraLayoutToggled)
-        self.connectStreamButton.clicked.connect(
-            lambda _checked=False: self.onConnectCameraStream())
-        self.disconnectStreamButton.clicked.connect(
-            lambda _checked=False: self.onDisconnectCameraStream())
-        self.pauseStreamButton.clicked.connect(
-            lambda _checked=False: self.onPauseCameraStream())
-        self.stepStreamButton.clicked.connect(
-            lambda _checked=False: self.onStepCameraStream())
-        self.resumeStreamButton.clicked.connect(
-            lambda _checked=False: self.onResumeCameraStream())
-        self.spawnButton.clicked.connect(self.on_spawn)
         self.markerAddButton.clicked.connect(self.onMarkerAdd)
         self.markerRemoveButton.clicked.connect(self.onMarkerRemove)
         self.markerApplyButton.clicked.connect(self.onMarkerApply)
         self.markerSaveButton.clicked.connect(self.onMarkerSave)
-        self.markerLoadButton.clicked.connect(self.onMarkerLoad)
-        self.registrationSyncButton.clicked.connect(self.onRegistrationSync)
         self.registrationFitButton.clicked.connect(self.onRegistrationFit)
         self.registrationMapButton.clicked.connect(self.onRegistrationMap)
         self.registrationSaveButton.clicked.connect(self.onRegistrationSave)
-        self.registrationLoadButton.clicked.connect(self.onRegistrationLoad)
         self.registrationAddButton.clicked.connect(self.onRegistrationAdd)
         self.registrationRemoveButton.clicked.connect(self.onRegistrationRemove)
         self.registrationTable.itemChanged.connect(self.onRegistrationEdited)
@@ -532,33 +359,19 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
         if self.registrationTable.rowCount == 0:
             self._load_registration_panel()
         try:
-            status = self.logic.camera_stream_status()
-        except Exception:
-            status = {"status": "off", "message": "camera stream: off"}
-        self.streamLabel.text = status["message"]
-        try:
-            self.truthLabel.text = self.logic.stream_result_status()["message"]
-        except Exception:
-            self.truthLabel.text = "camera result: no measurement yet"
-        try:
             video = self.logic.video_status()
         except Exception:
-            video = {"status": "off", "message": "video: off"}
+            video = {"status": "off", "message": "cameras: off"}
         self.videoLabel.text = video["message"]
         self.realCameraStopButton.setEnabled(video["status"] == "running")
-        if status["status"] in ("waiting", "connected", "disconnected"):
-            self._watch_stream_label()
 
     def exit(self):
         self._stop_video_quietly()
-        self.logic.stop_watch()
-        self._stop_stream_timer()
         self.set_pick_enabled(False)
         self.remove_filters()
 
     def cleanup(self):
         self._stop_video_quietly()
-        self._stop_stream_timer()
         self.remove_filters()
 
     def _stop_video_quietly(self):
@@ -586,11 +399,10 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
         return view_widget
 
     def install_filters(self):
-        """Attach the click filters to every view that is showing.
+        """Attach the pick filter to the standard slice views.
 
-        Called again after a layout switch: a camera view only exists once
-        the camera layout has been shown. Each name is checked before it is
-        added, so a second call never stacks two filters on one widget.
+        The camera panes are pictures, not coordinate spaces: they have no
+        click filter. The 3D view keeps only the Ctrl+drag orbit filter.
         """
         layout = slicer.app.layoutManager()
         for view, widget_name in VIEW_WIDGETS.items():
@@ -604,19 +416,6 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
             target.installEventFilter(view_filter)
             self.filters[widget_name] = (target, view_filter)
 
-        # Camera panes get their own filters, addressed by the pane name: a
-        # click there is a pixel in that camera, never a slice-mode click.
-        for widget_name in CAMERA_VIEWS:
-            if widget_name in self.cameraFilters:
-                continue
-            slice_widget = layout.sliceWidget(widget_name)
-            if slice_widget is None:
-                continue
-            target = self._mouse_target(slice_widget.sliceView())
-            view_filter = SliceClickFilter(widget_name, self.on_camera_click)
-            target.installEventFilter(view_filter)
-            self.cameraFilters[widget_name] = (target, view_filter)
-
         if self.threeDFilter is None:
             three_d = layout.threeDWidget(0)
             if three_d is not None:
@@ -627,15 +426,13 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
                 self.threeDFilter = (target, three_filter)
 
     def remove_filters(self, reset_modes=True):
-        for target, view_filter in (list(self.filters.values())
-                                    + list(self.cameraFilters.values())):
+        for target, view_filter in self.filters.values():
             try:
                 target.removeEventFilter(view_filter)
             except RuntimeError:
                 # The layout switch already deleted the widget underneath it.
                 pass
         self.filters = {}
-        self.cameraFilters = {}
         if self.threeDFilter is not None:
             target, three_filter = self.threeDFilter
             try:
@@ -644,86 +441,20 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
                 pass
             self.threeDFilter = None
         if reset_modes:
-            self.pickBox.checked = False  # toggled() flips the enabled flags
-            self.probeBox.checked = False
-            self.cameraBox.checked = False
+            self.pickBox.checked = False
 
     def set_pick_enabled(self, enabled):
         for _widget, view_filter in self.filters.values():
             view_filter.click_enabled = bool(enabled)
 
-    def set_camera_enabled(self, enabled):
-        for _widget, view_filter in self.cameraFilters.values():
-            view_filter.click_enabled = bool(enabled)
-
-    # -- handlers -------------------------------------------------------------
-
     def refresh_filters(self):
-        """Clicks follow the ticked mode: camera panes only in camera mode."""
-        self.set_pick_enabled(self.pickBox.checked or self.probeBox.checked)
-        self.set_camera_enabled(self.cameraBox.checked)
-
-    def _exclusive_mode(self, mode):
-        """Release the other click modes, so the last tick is the only one."""
-        for box in (self.pickBox, self.probeBox, self.cameraBox):
-            if box is not mode and box.checked:
-                box.checked = False
+        self.set_pick_enabled(self.pickBox.checked)
 
     def onPickToggled(self, checked):
-        if checked:
-            self._exclusive_mode(self.pickBox)
         self.refresh_filters()
-
-    def onCameraToggled(self, checked):
-        if checked:
-            self._exclusive_mode(self.cameraBox)
-        self.refresh_filters()
-        if checked:
-            self.cameraLabel.text = (
-                "camera mode: live video (fixed target); click the SAME point "
-                "once in c1, c2 and c3; each click moves that mark at once")
-            if not self.cameraFilters:
-                self.cameraLabel.text += (
-                    " — press Camera layout to show the camera panes")
-            self.rayGuideLabel.text = self.logic.ray_guide_status()
-            try:
-                timer = self.logic.watch_camera_clicks()
-                try:
-                    timer.timeout.disconnect(self._refresh_camera_label)
-                except Exception:
-                    pass
-                timer.timeout.connect(self._refresh_camera_label)
-            except Exception:
-                pass
-        else:
-            self.logic.clear_camera_ray_guide()
-            self.rayGuideLabel.text = "ray guide: off"
-
-    def _refresh_camera_label(self):
-        try:
-            self.cameraLabel.text = self.logic.camera_status()
-        except Exception:
-            pass
-        self._refresh_camera_pixel_fields()
-        self._update_identical_warning()
-
-    def onProbeToggled(self, checked):
-        if checked:
-            self._exclusive_mode(self.probeBox)
-        self.refresh_filters()
-        if checked:
-            self.logic.watch_probe()
-            self.probeLabel.text = ("probe mode: click a slice, or drag the "
-                                    "SandboxProbe point, and the sandbox follows")
-        else:
-            self.logic.stop_probe_watch()
-            self.probeLabel.text = "probe mode: off"
 
     def on_click(self, view, u_px, v_px):
         self.lastClick = (view, u_px, v_px)
-        if self.probeBox.checked:
-            self.on_probe_click(view, u_px, v_px)
-            return
         try:
             result = self.logic.place_from_click(view, u_px, v_px)
         except Exception as exc:  # noqa: BLE001 - a click must never crash Slicer
@@ -735,16 +466,10 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
 
         if result["status"] == "placed":
             cube = result["cube"]
-            ras = result["ras"]
             self.lastCube = tuple(float(value) for value in cube)
             self.lastReal = None
             self.realTargetLabel.text = (
-                "mapped target: none — press Map for this target")
-            self.lastLabel.text = (
-                f"Last: {view} view, depth {result['depth_mm']:.1f} mm\n"
-                f"Cube ({cube[0]:.1f}, {cube[1]:.1f}, {cube[2]:.1f}) mm\n"
-                f"RAS  ({ras[0]:.1f}, {ras[1]:.1f}, {ras[2]:.1f}) mm"
-            )
+                "real target: none — press Map for this target")
             if result["log_error"]:
                 self.statusLabel.text = (
                     f"Placed, but the log write failed: {result['log_error']}"
@@ -755,263 +480,24 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
                 )
         else:
             self.statusLabel.text = f"Outside the field: {result['message']}"
-        self.update_counts()
 
-    def on_probe_click(self, view, u_px, v_px):
-        """A click in probe mode moves the point the sandbox follows.
-
-        No target is placed and nothing is logged: a probe is a question the
-        operator is asking the cameras, and the camera log holds measurements.
-        """
-        try:
-            result = self.logic.set_probe_from_click(view, u_px, v_px)
-        except Exception as exc:        # noqa: BLE001 - a click must never crash Slicer
-            import traceback  # noqa: PLC0415
-
-            traceback.print_exc()
-            self.probeLabel.text = f"probe failed: {exc}"
-            return
-        cube = result["cube"]
-        self.probeLabel.text = (
-            f"probe from {view} view, depth {result['depth_mm']:.1f} mm\n"
-            f"Cube ({cube[0]:.1f}, {cube[1]:.1f}, {cube[2]:.1f}) mm"
-        )
-
-    def on_camera_click(self, widget_name, u_px, v_px):
-        """A click in a camera pane becomes that camera's image pixel.
-
-        Each click publishes the live set at once -- views not clicked yet
-        go out as null -- and leaves that camera's mark on its view. A
-        refused click names its view on the label instead of crashing Slicer.
-        """
-        try:
-            result = self.logic.set_camera_click(widget_name, u_px, v_px)
-        except ValueError as exc:
-            self.cameraLabel.text = str(exc)
-            return
-        except Exception as exc:  # noqa: BLE001 - a click must never crash Slicer
-            import traceback  # noqa: PLC0415
-
-            traceback.print_exc()
-            self.cameraLabel.text = f"Internal error: {exc} (details in console)"
-            return
-        done = result["clicked"]
-        u, v = result["pixel"]
-        status = self.logic.camera_status()
-        if result["published"] is not None:
-            self.cameraLabel.text = (
-                f"{status} — published {result['published'].name}"
-            )
-        else:
-            self.cameraLabel.text = (
-                f"{status} ({widget_name} pixel ({u:.1f}, {v:.1f}))"
-            )
-        self.rayGuideLabel.text = self.logic.ray_guide_status()
-        self._refresh_camera_pixel_fields()
-        self._update_identical_warning()
-
-    def on_camera_pixel_edited(self, widget_name):
-        """A typed pixel from the panel's c-row fields.
-
-        Parses this camera's two fields as floats and applies them through
-        apply_camera_pixel -- the same store/mark/publish tail the
-        slice-widget clicks use. A blank row is not an edit (nothing to
-        apply); anything unparseable is noted and the fields are restored.
-        """
-        pair = self.cameraPixelEdits.get(widget_name)
-        if pair is None:
-            return {"status": "refused", "message": f"{widget_name}: no pixel row"}
-        u_edit, v_edit = pair
-        u_text = u_edit.text.strip()
-        v_text = v_edit.text.strip()
-        if not u_text or not v_text:
-            self._refresh_camera_pixel_fields()
-            return {"status": "ignored", "message": "empty pixel field"}
-        try:
-            u, v = float(u_text), float(v_text)
-        except ValueError:
-            tag = CAMERA_CLICK_LABELS[CAMERA_VIEWS.index(widget_name)]
-            self.cameraPixelNote.text = f"{tag} needs numbers for u and v"
-            self._refresh_camera_pixel_fields()
-            return {"status": "refused", "message": self.cameraPixelNote.text}
-        return self.apply_camera_pixel(widget_name, u, v)
-
-    def apply_camera_pixel(self, widget_name, u, v):
-        """Apply a typed (u, v) pixel for one camera, like a click would.
-
-        The single programmatic entry the smoke drives exactly as a real edit
-        does: logic.set_camera_pixel resolves RAS from the volume's IJKToRAS
-        and stores through the shared tail, so the sandbox follows via the
-        existing file. Out-of-bounds values are refused -- state untouched,
-        note shown, fields restored -- never clamped.
-        """
-        tag = CAMERA_CLICK_LABELS[CAMERA_VIEWS.index(widget_name)]
-        try:
-            result = self.logic.set_camera_pixel(widget_name, float(u), float(v))
-        except ValueError as exc:
-            self.cameraPixelNote.text = self._outside_note(widget_name, str(exc))
-            self._refresh_camera_pixel_fields()
-            return {"status": "refused", "message": str(exc)}
-        except Exception as exc:  # noqa: BLE001 - a typed pixel must never crash Slicer
-            import traceback  # noqa: PLC0415
-
-            traceback.print_exc()
-            self.cameraPixelNote.text = f"Internal error: {exc} (details in console)"
-            self._refresh_camera_pixel_fields()
-            return {"status": "refused", "message": str(exc)}
-        status = self.logic.camera_status()
-        if result["published"] is not None:
-            self.cameraLabel.text = (
-                f"{status} — published {result['published'].name}"
-            )
-        else:
-            self.cameraLabel.text = status
-        self.rayGuideLabel.text = self.logic.ray_guide_status()
-        self.cameraPixelNote.text = ""
-        self._refresh_camera_pixel_fields()
-        self._update_identical_warning()
-        return result
-
-    def _outside_note(self, widget_name, message):
-        """The refusal note for a typed out-of-picture pixel.
-
-        Names the camera tag with its picture range, e.g.
-        `c2 outside the picture (0..319)`. The range is read from the
-        background volume; when the view has no picture the logic message
-        (which already says "outside the picture") stands as-is.
-        """
-        tag = CAMERA_CLICK_LABELS[CAMERA_VIEWS.index(widget_name)]
-        if "outside the picture" not in message:
-            return message
-        try:
-            widget = slicer.app.layoutManager().sliceWidget(widget_name)
-            node = slicer.mrmlScene.GetNodeByID(
-                widget.sliceLogic().GetSliceCompositeNode().GetBackgroundVolumeID())
-            if node is not None and node.GetImageData() is not None:
-                width = node.GetImageData().GetDimensions()[0]
-                return f"{tag} outside the picture (0..{int(width) - 1})"
-        except Exception:
-            pass
-        return f"{tag} outside the picture"
-
-    def _refresh_camera_pixel_fields(self):
-        """Show each camera's published pixel, without fighting the typist.
-
-        A field the user is currently editing (keyboard focus) is left alone
-        so programmatic refreshes never overwrite mid-typing; every other
-        field follows the live click state. A view with no click shows the
-        placeholder (empty text).
-        """
-        edits = getattr(self, "cameraPixelEdits", None)
-        if not edits:
-            return
-        for widget_name, pair in edits.items():
-            u_edit, v_edit = pair
-            try:
-                pixel = self.logic.clicks.get(widget_name)
-            except Exception:
-                continue
-            if pixel is None:
-                try:
-                    if not u_edit.hasFocus():
-                        u_edit.clear()
-                    if not v_edit.hasFocus():
-                        v_edit.clear()
-                except Exception:
-                    pass
-            else:
-                try:
-                    if not u_edit.hasFocus():
-                        u_edit.setText(f"{pixel[0]:.1f}")
-                    if not v_edit.hasFocus():
-                        v_edit.setText(f"{pixel[1]:.1f}")
-                except Exception:
-                    pass
-
-    def _update_identical_warning(self):
-        """Warn when all three pixels agree to the pixel -- today's mistake.
-
-        One 3D object never projects to the same pixel in three different
-        cameras; typing the same numbers into all three rows collapses the
-        rays. Every pair within 0.5 px raises the warning (stable substring
-        `identical`); any other state clears it.
-        """
-        note = getattr(self, "cameraPixelNote", None)
-        if note is None:
-            return
-        try:
-            pixels = [self.logic.clicks.get(w) for w in CAMERA_VIEWS]
-        except Exception:
-            return
-        if any(p is None for p in pixels):
-            if "identical" in note.text:
-                note.text = ""
-            return
-        worst = 0.0
-        for i in range(len(pixels)):
-            for j in range(i + 1, len(pixels)):
-                du = pixels[i][0] - pixels[j][0]
-                dv = pixels[i][1] - pixels[j][1]
-                worst = max(worst, (du * du + dv * dv) ** 0.5)
-        if worst <= 0.5:
-            note.text = ("warning: all three pixels identical — three cameras "
-                         "rarely agree to the pixel, check the marks")
-        elif "identical" in note.text:
-            note.text = ""
-
-    def on_spawn(self):
-        """Seed the three camera clicks from the typed rig-mm 3D point.
-
-        The file's matrices say where the point lands in each picture, and
-        those pixels are applied through the click state in one pass -- so
-        afterwards the marks are ordinary editable points. An out-of-picture
-        camera becomes an unclicked slot. Garbage or a missing rig file
-        refuses with a note and changes nothing (the pixel rows' ValueError
-        pattern).
-        """
-        try:
-            x = float(self.spawnXEdit.text.strip())
-            y = float(self.spawnYEdit.text.strip())
-            z = float(self.spawnZEdit.text.strip())
-        except ValueError:
-            self.spawnNote.text = "spawn needs numbers for x, y and z"
-            return {"status": "refused", "message": self.spawnNote.text}
-        try:
-            result = self.logic.spawn_point(x, y, z)
-        except ValueError as exc:
-            self.spawnNote.text = f"spawn needs numbers for x, y and z ({exc})"
-            return {"status": "refused", "message": self.spawnNote.text}
-        except Exception as exc:  # noqa: BLE001 - a spawn must never crash Slicer
-            import traceback  # noqa: PLC0415
-
-            traceback.print_exc()
-            self.spawnNote.text = f"Internal error: {exc} (details in console)"
-            return {"status": "refused", "message": str(exc)}
-        if result.get("status") == "refused":
-            self.spawnNote.text = str(result.get("message", "spawn refused"))
-            return result
-        parts = []
-        for tag, pixel in zip(CAMERA_CLICK_LABELS, result["pixels"]):
-            if pixel is None:
-                parts.append(f"{tag} outside the picture")
-            else:
-                parts.append(f"{tag} ({pixel[0]:.1f}, {pixel[1]:.1f})")
-        self.spawnNote.text = (f"spawned ({x:g}, {y:g}, {z:g}): "
-                               + " ".join(parts))
-        self.cameraLabel.text = self.logic.camera_status()
-        self._refresh_camera_pixel_fields()
-        self._update_identical_warning()
-        return result
-
-    def onClearCameraClicks(self, checked=False):
-        self.logic.clear_camera_clicks()
-        self.cameraLabel.text = "camera clicks cleared (0 of 3)"
-        self.rayGuideLabel.text = self.logic.ray_guide_status()
-        self.truthLabel.text = self.logic.stream_result_status()["message"]
-        self.cameraPixelNote.text = ""
-        self._refresh_camera_pixel_fields()
-
-    # -- the marker plate -------------------------------------------------
+    def _fill_marker_table(self, plate):
+        """Show a validated plate in the panel fields."""
+        self.markerTable.setRowCount(0)
+        for marker in plate["markers"]:
+            row = self.markerTable.rowCount
+            self.markerTable.insertRow(row)
+            self.markerTable.setItem(
+                row, 0, qt.QTableWidgetItem(marker["label"]))
+            for column, value in ((1, marker["mm"][0]),
+                                  (2, marker["mm"][1]),
+                                  (3, marker["z"])):
+                self.markerTable.setItem(
+                    row, column, qt.QTableWidgetItem(f"{value:g}"))
+        self.markerWidthSpin.value = plate["width"]
+        self.markerHeightSpin.value = plate["height"]
+        (self.markerOriginXSpin.value, self.markerOriginYSpin.value,
+         self.markerOriginZSpin.value) = plate["origin"]
 
     def _load_marker_panel(self):
         """Fill the table from marker-plate.json, quietly when it is absent."""
@@ -1026,23 +512,6 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
         self.markerStatusLabel.text = (
             f"markers: {len(plate['markers'])} loaded from {plate['path']} "
             f"(not applied)")
-
-    def _fill_marker_table(self, plate):
-        """Show a validated plate in the panel fields."""
-        self.markerTable.setRowCount(0)
-        for marker in plate["markers"]:
-            row = self.markerTable.rowCount
-            self.markerTable.insertRow(row)
-            self.markerTable.setItem(row, 0, qt.QTableWidgetItem(marker["label"]))
-            for column, value in ((1, marker["mm"][0]),
-                                  (2, marker["mm"][1]),
-                                  (3, marker["z"])):
-                self.markerTable.setItem(
-                    row, column, qt.QTableWidgetItem(f"{value:g}"))
-        self.markerWidthSpin.value = plate["width"]
-        self.markerHeightSpin.value = plate["height"]
-        (self.markerOriginXSpin.value, self.markerOriginYSpin.value,
-         self.markerOriginZSpin.value) = plate["origin"]
 
     def _plate_from_panel(self):
         """The panel as a validated plate, refusing by row and column."""
@@ -1119,9 +588,6 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
             return
         self.markerStatusLabel.text = f"markers saved to {path}"
 
-    def onMarkerLoad(self, checked=False):
-        self._load_marker_panel()
-
     # -- the virtual -> real registration --------------------------------
 
     def onRegistrationEdited(self, *_args):
@@ -1131,7 +597,7 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
             self.registrationStatusLabel.text = (
                 "registration: edited; fit the markers again")
             self.realTargetLabel.text = (
-                "mapped target: none (registration edited)")
+                "real target: none (registration edited)")
 
     def _fill_registration_table(self, registration):
         """Show a loaded registration in the panel fields."""
@@ -1196,10 +662,7 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
         else:
             self.registrationStatusLabel.text = (
                 f"registration: {config['note']}; fill the measured mm")
-        self.realTargetLabel.text = "mapped target: none (registration loaded)"
-
-    def onRegistrationLoad(self, checked=False):
-        self._load_registration_panel()
+        self.realTargetLabel.text = "real target: none (registration loaded)"
 
     def onRegistrationAdd(self, checked=False):
         row = self.registrationTable.rowCount
@@ -1217,43 +680,6 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
         if row >= 0:
             self.registrationTable.removeRow(row)
 
-    def onRegistrationSync(self, checked=False):
-        """Copy the plate's cube coordinates into the v* columns by label."""
-        try:
-            plate = self._plate_from_panel()
-        except RuntimeError as exc:
-            self.registrationStatusLabel.text = f"registration: {exc}"
-            return
-
-        rows = {}
-        for row in range(self.registrationTable.rowCount):
-            item = self.registrationTable.item(row, 0)
-            if item is not None and item.text().strip():
-                rows[item.text().strip()] = row
-
-        origin = plate["origin"]
-        for marker in plate["markers"]:
-            label = marker["label"]
-            virtual = (origin[0] + marker["mm"][0],
-                       origin[1] + marker["mm"][1],
-                       origin[2] + marker["z"])
-            row = rows.get(label)
-            if row is None:
-                row = self.registrationTable.rowCount
-                self.registrationTable.insertRow(row)
-                self.registrationTable.setItem(
-                    row, 0, qt.QTableWidgetItem(label))
-                for column in range(4, 7):
-                    self.registrationTable.setItem(
-                        row, column, qt.QTableWidgetItem("0"))
-                rows[label] = row
-            for column, value in enumerate(virtual, start=1):
-                self.registrationTable.setItem(
-                    row, column, qt.QTableWidgetItem(f"{value:g}"))
-        self.registrationStatusLabel.text = (
-            "registration: virtual coordinates synced from the plate; the "
-            "measured real mm are unchanged")
-
     def onRegistrationFit(self, checked=False):
         """Fit the rigid transform and write the solved map beside the logs."""
         from datetime import datetime
@@ -1265,13 +691,13 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
         except RuntimeError as exc:
             self.registrationStatusLabel.text = f"registration: {exc}"
             self.realTargetLabel.text = (
-                "mapped target: none (registration invalid)")
+                "real target: none (registration invalid)")
             return
         if not config["fittable"]:
             self.registrationFit = None
             self.registrationStatusLabel.text = f"registration: {config['note']}"
             self.realTargetLabel.text = (
-                "mapped target: none (registration not fittable)")
+                "real target: none (registration not fittable)")
             return
         try:
             fit = registration.fit_registration(config)
@@ -1279,12 +705,12 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
             self.registrationFit = None
             self.registrationStatusLabel.text = f"registration: {exc}"
             self.realTargetLabel.text = (
-                "mapped target: none (registration failed)")
+                "real target: none (registration failed)")
             return
 
         self.registrationFit = fit
         self.realTargetLabel.text = (
-            "mapped target: none — place a target and press Map")
+            "real target: none — place a target and press Map")
         text = "registration: " + registration.fit_note(fit)
         try:
             import json
@@ -1310,7 +736,7 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
 
         if self.registrationFit is None:
             self.realTargetLabel.text = (
-                "mapped target: fit the markers first")
+                "real target: fit the markers first")
             return
         try:
             cube = self.logic.last_target_cube()
@@ -1320,13 +746,13 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
             cube = self.lastCube
         if cube is None:
             self.realTargetLabel.text = (
-                "mapped target: place a target in the virtual scene first")
+                "real target: place a target in the virtual scene first")
             return
         self.lastCube = tuple(float(value) for value in cube)
         try:
             real = apply_transform(self.registrationFit, self.lastCube)
         except (KeyError, TypeError, ValueError) as exc:
-            self.realTargetLabel.text = f"mapped target: {exc}"
+            self.realTargetLabel.text = f"real target: {exc}"
             return
         self.lastReal = tuple(float(value) for value in real)
         frame = self.registrationFit["real_frame"]
@@ -1404,28 +830,23 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
             self.cameraLayoutButton.checked = bool(enabled)
             self.install_filters()
         except Exception as exc:            # noqa: BLE001 - shown in the panel
-            self.streamLabel.text = f"layout: {exc}"
+            self.videoLabel.text = f"layout: {exc}"
             return
         finally:
             self._layout_busy = False
         self.refresh_filters()
 
     def onConnectRealCameras(self):
-        """One button: camera layout, then the sender, then the connection.
-
-        The layout comes first: binding a volume needs the camera panes to
-        exist, and a camera picture is only ever shown in its own view.
-        """
+        """One button: camera layout, then the sender, then the connection."""
         self._show_camera_layout(True)
         device = self.realCameraDeviceEdit.text.strip() or "/dev/video0"
         try:
             connected = self.logic.connect_camera_stream(
                 port=int(self.portSpin.value))
         except Exception as exc:            # noqa: BLE001 - shown in the panel
-            self.streamLabel.text = f"camera stream: could not connect: {exc}"
+            self.videoLabel.text = f"cameras: could not connect: {exc}"
             return
-        self.streamLabel.text = connected["message"]
-        self._watch_stream_label()
+        self.videoLabel.text = connected["message"]
 
         try:
             result = self.logic.start_real_cameras(
@@ -1435,8 +856,7 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
             return
         self.videoLabel.text = result["message"]
         self.realCameraStopButton.setEnabled(result["status"] == "running")
-        if result["status"] != "running":
-            self.videoNote.text = result["message"]
+        self.videoNote.text = result["message"]
 
     def onStopRealCameras(self):
         try:
@@ -1447,177 +867,20 @@ class TargetingWidget(ScriptedLoadableModuleWidget):
         self.videoLabel.text = result["message"]
         self.realCameraStopButton.setEnabled(False)
         try:
-            stream = self.logic.disconnect_camera_stream()
-        except Exception as exc:            # noqa: BLE001 - shown to the operator
-            self.streamLabel.text = f"camera stream: could not disconnect: {exc}"
-            return
-        self.streamLabel.text = stream["message"]
-        self._stop_stream_timer()
-        # The camera workspace closes with the cameras; the layout button
-        # brings it back without restarting the sender.
-        self._show_camera_layout(False)
-
-    def onConnectCameraStream(self):
-        # The panes are where the volumes land: show the layout first.
-        self._show_camera_layout(True)
-        try:
-            result = self.logic.connect_camera_stream()
-        except Exception as exc:            # noqa: BLE001 - shown to the operator
-            self.streamLabel.text = f"camera stream: could not connect: {exc}"
-            return
-        self.streamLabel.text = result["message"]
-        self._watch_stream_label()
-
-    def onDisconnectCameraStream(self):
-        try:
-            result = self.logic.disconnect_camera_stream()
-        except Exception as exc:            # noqa: BLE001 - shown to the operator
-            self.streamLabel.text = f"camera stream: could not disconnect: {exc}"
-            return
-        self.streamLabel.text = result["message"]
-        try:
-            video = self.logic.video_status()
-        except Exception:
-            video = {"message": "video: stopped"}
-        self.videoLabel.text = video["message"]
-        self.realCameraStopButton.setEnabled(False)
-        self._stop_stream_timer()
-        self._show_camera_layout(False)
-
-    def onPauseCameraStream(self):
-        try:
-            result = self.logic.pause_camera_stream()
-        except Exception as exc:            # noqa: BLE001 - shown to the operator
-            self.streamLabel.text = f"camera stream: could not pause: {exc}"
-            return
-        self.streamLabel.text = result["message"]
-        self._watch_stream_label()
-
-    def onStepCameraStream(self):
-        try:
-            result = self.logic.step_camera_stream()
-        except Exception as exc:            # noqa: BLE001 - shown to the operator
-            self.streamLabel.text = f"camera stream: could not step: {exc}"
-            return
-        self.streamLabel.text = result["message"]
-        self._watch_stream_label()
-
-    def onResumeCameraStream(self):
-        try:
-            result = self.logic.resume_camera_stream()
-        except Exception as exc:            # noqa: BLE001 - shown to the operator
-            self.streamLabel.text = f"camera stream: could not resume: {exc}"
-            return
-        self.streamLabel.text = result["message"]
-        self._watch_stream_label()
-
-    def _watch_stream_label(self):
-        if self.streamTimer is None:
-            self.streamTimer = qt.QTimer()
-            self.streamTimer.setInterval(500)
-            self.streamTimer.timeout.connect(self._refresh_stream_label)
-        self.streamTimer.start()
-
-    def _stop_stream_timer(self):
-        if self.streamTimer is not None:
-            self.streamTimer.stop()
-
-    def _refresh_stream_label(self):
-        try:
-            result = self.logic.camera_stream_status()
-        except Exception as exc:            # noqa: BLE001 - shown to the operator
-            self.streamLabel.text = f"camera stream: {exc}"
-            self._stop_stream_timer()
-            return
-        self.streamLabel.text = result["message"]
-        try:
-            self.truthLabel.text = self.logic.stream_result_status()["message"]
-        except Exception as exc:            # noqa: BLE001 - shown to the operator
-            self.truthLabel.text = f"camera result: {exc}"
-        try:
-            self.rayGuideLabel.text = self.logic.ray_guide_status()
+            self.logic.disconnect_camera_stream()
         except Exception:
             pass
-        video = None
-        try:
-            video = self.logic.video_status()
-        except Exception as exc:            # noqa: BLE001 - shown to the operator
-            self.videoLabel.text = f"video: {exc}"
-        else:
-            self.videoLabel.text = video["message"]
-            self.realCameraStopButton.setEnabled(video["status"] == "running")
-        if (result["status"] in ("off", "unavailable", "error", "paused")
-                and not (video and video["status"] == "running")):
-            self._stop_stream_timer()
-
-    def update_counts(self):
-        self.countsLabel.text = (
-            f"Placed: {self.logic.placed}     Rejected: {self.logic.rejected}"
-        )
+        self._show_camera_layout(False)
 
     def onClear(self, checked=False):
         self.logic.clear_targets()
-        self.lastLabel.text = "no target yet"
         self.lastCube = None
         self.lastReal = None
         self.realTargetLabel.text = (
-            "mapped target: none — place a target in the virtual scene")
-        self.update_counts()
-
-    def onOpenLog(self, checked=False):
-        LOGS_DIR.mkdir(parents=True, exist_ok=True)
-        qt.QDesktopServices.openUrl(qt.QUrl.fromLocalFile(str(LOGS_DIR)))
-
-    def onLoadExternal(self):
-        try:
-            result = self.logic.load_external_targets()
-        except Exception as exc:            # noqa: BLE001 - shown to the operator
-            self.externalLabel.text = f"could not load: {exc}"
-            return
-        if result["status"] == "nothing":
-            self.externalLabel.text = (
-                f"no camera targets to show ({result['skipped']} row(s) skipped)"
-            )
-        else:
-            self.externalLabel.text = (
-                f"loaded {result['loaded']} camera target(s), "
-                f"{result['skipped']} row(s) skipped"
-            )
-        if result["problems"]:
-            self.externalLabel.text += f" — first: {result['problems'][0]}"
-
-    def onLoadCameraViews(self, folder=None):
-        """Load the three camera pictures, asking which folder first.
-
-        The chooser starts at the last loaded folder, or the module default
-        `logs/camera-frames`. A scripted caller (the smoke) may pass a folder
-        to skip the dialog; cancelling changes nothing in the scene.
-        """
-        if folder is None:
-            start = getattr(self.logic, "frames_folder", None)
-            start = str(start if start is not None else LOGS_DIR / "camera-frames")
-            chosen = qt.QFileDialog.getExistingDirectory(
-                slicer.util.mainWindow(),
-                "Choose the frames folder (camera-frames.json + PNGs)",
-                start)
-            if not chosen:
-                self.cameraLabel.text = "load cancelled — camera views unchanged"
-                return
-            folder = chosen
-        try:
-            result = self.logic.load_camera_views(folder)
-        except Exception as exc:            # noqa: BLE001 - shown to the operator
-            self.cameraLabel.text = f"could not load: {exc}"
-            return
-        if result["status"] == "nothing":
-            first = result["problems"][0] if result["problems"] else "no frames found"
-            self.cameraLabel.text = f"no camera views loaded — {first}"
-        else:
-            self.cameraLabel.text = f"loaded {', '.join(result['views'].values())}"
-            if result["problems"]:
-                self.cameraLabel.text += f" — first: {result['problems'][0]}"
+            "real target: none — fit the markers, place a target, then Map")
 
     def refresh_status(self):
         self.statusLabel.text = (
-            "Connect the real cameras, then declare the marker plate below. "
-            "Apply draws it in the cube and checks it against camera 1.")
+            "Tick Pick targets, click a point in Red/Green/Yellow; the slice "
+            "slider gives the depth. Fit the virtual -> real markers, then "
+            "Map last target.")
